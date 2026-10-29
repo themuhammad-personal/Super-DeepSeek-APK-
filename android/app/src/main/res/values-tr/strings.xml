@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bds_update_title">Güncelleme var</string>
+    <string name="bds_update_message">Super DeepSeek %1$s hazır. Sizde %2$s yüklü.</string>
+    <string name="bds_update_message_beta">Super DeepSeek %1$s için daha yeni bir derleme hazır.</string>
+    <string name="bds_update_download">İndir</string>
+    <string name="bds_update_later">Sonra</string>
+    <string name="bds_update_downloading">Güncelleme indiriliyor…</string>
+    <string name="bds_update_download_failed">İndirme başarısız (%1$s).</string>
+    <string name="bds_update_need_permission">Super DeepSeek için bilinmeyen uygulama kurma iznini verin, sonra tekrar deneyin.</string>
+    <string name="bds_update_install_failed">Paket yükleyici açılamadı.</string>
+    <string name="bds_download_started">%1$s indiriliyor…</string>
+
+    <!-- App Shortcuts -->
+    <string name="shortcut_new_chat">Yeni sohbet</string>
+    <string name="shortcut_deep_research">Derin araştırma</string>
+
+    <!-- Linux sandbox (foreground service notification) -->
+    <string name="sandbox_channel">Linux sanal alanı</string>
+    <string name="sandbox_title">Linux sanal alanı</string>
+    <string name="sandbox_idle">Boşta</string>
+    <string name="sandbox_agent_working">Ajan çalışıyor</string>
+    <string name="sandbox_stop">Durdur</string>
+    <plurals name="sandbox_running">
+        <item quantity="one">%d komut çalışıyor</item>
+        <item quantity="other">%d komut çalışıyor</item>
+    </plurals>
+
+    <!-- Isolated artifact viewer (GeneratedAppActivity) -->
+    <string name="viewer_close">Kapat</string>
+    <string name="viewer_untitled">Yapıt</string>
+    <string name="viewer_subtitle">Yalıtılmış uygulama · HTML</string>
+    <string name="viewer_preview">Önizleme</string>
+    <string name="viewer_code">Kod</string>
+    <string name="viewer_rerun">Yeniden çalıştır</string>
+    <string name="viewer_share">Paylaş</string>
+    <string name="viewer_share_title">Oluşturulan HTML paylaşılsın mı?</string>
+    <string name="viewer_share_message">Kaynağı özel veriler açısından gözden geçirin. Dışa aktarılan dosya çalıştırılabilir kod içerir.</string>
+    <string name="viewer_cancel">İptal</string>
+    <string name="viewer_share_chooser">Uygulamayı paylaş</string>
+</resources>

@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Linux sandbox: a foreground service keeps long commands, installs and
+         dev servers alive while the user is in another app. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- In-app updates (#157). The APK is downloaded from this project's own GitHub releases and
+         handed to the system installer, which is what requires this declaration. It is a
+         signature permission: it cannot be requested at runtime, the user instead grants this app
+         "install unknown apps" in Settings, and MainActivity routes them there when the grant is
+         missing. Without the declaration the installer intent is refused outright. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Mic button uses SpeechRecognition (browser API). The permission is
+         declared so future native fallbacks remain possible. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Pre-Q downloads land in shared storage. API 29+ uses MediaStore and
+         doesn't need this permission. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!-- Android 11+ package visibility: required to launch ACTION_VIEW
+         intents (file viewers for downloads, external browsers). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="*/*" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:extractNativeLibs="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:theme="@style/Theme.SuperDeepSeek">
+        <!-- configChanges must cover every input-peripheral configuration change.
+             MainActivity is a single-WebView host whose onCreate always calls
+             loads chat.deepseek.com, so any unhandled config change destroys and
+             recreates the Activity, reloads the WebView and drops the user back to
+             the DeepSeek home screen mid-conversation.
+
+             "keyboard" is the flag Android raises when an external keyboard is
+             attached or detached; "touchscreen" is raised when an input peripheral
+             is connected or disconnected, and "navigation" when a pointing device
+             appears. All three are listed so plugging a keyboard in or out leaves
+             the session untouched and only the soft IME reacts. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|touchscreen|smallestScreenSize|uiMode|density|fontScale"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.SuperDeepSeek.Starting">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Share target: text, links and files of any type (one or many).
+                 Handled by MainActivity.handleIncomingIntent → sd-native.js. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
+            <!-- "Ask Super DeepSeek" in the text-selection menu of other apps. -->
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <!-- Deep-link handler: opens chat.deepseek.com URLs in the
+                 existing WebView session (e.g. from other apps). -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="chat.deepseek.com" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <activity
+            android:name=".StudioActivity"
+            android:exported="false"
+            android:label="Linux Studio"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|navigation|touchscreen|smallestScreenSize|uiMode|density|fontScale"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.SuperDeepSeek.NoActionBar" />
+
+        <activity android:name=".GeneratedAppActivity" android:exported="false"
+            android:theme="@style/Theme.SuperDeepSeek.NoActionBar" />
+
+        <service
+            android:name=".SandboxService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs user-requested commands in an on-device Linux environment (builds, package installs, local dev servers) that must continue while the app is in the background." />
+        </service>
+
+        <!-- FileProvider for legacy (<=API 28) ACTION_VIEW handoff after a
+             blob download writes into the app's external Downloads folder. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/bds_file_provider_paths" />
+        </provider>
+    </application>
+
+</manifest>

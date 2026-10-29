@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_chat"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_new_chat"
+        android:shortcutLongLabel="@string/shortcut_new_chat">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.superdeepseek.app"
+            android:targetClass="com.superdeepseek.app.MainActivity">
+            <extra android:name="bds_action" android:value="new_chat" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="deep_research"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_deep_research"
+        android:shortcutLongLabel="@string/shortcut_deep_research">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.superdeepseek.app"
+            android:targetClass="com.superdeepseek.app.MainActivity">
+            <extra android:name="bds_action" android:value="deep_research" />
+        </intent>
+    </shortcut>
+</shortcuts>

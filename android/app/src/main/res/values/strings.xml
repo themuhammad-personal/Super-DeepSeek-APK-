@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Super DeepSeek</string>
+    <string name="bds_asset_authority" translatable="false">bds-asset.local</string>
+
+    <!-- In-app updates (#157). Native strings follow the device locale, which is what
+         applySystemLocaleCookie() already assumes when it seeds NEXT_LOCALE. -->
+    <string name="bds_update_title">Update available</string>
+    <string name="bds_update_message">Super DeepSeek %1$s is available. You have %2$s.</string>
+    <string name="bds_update_message_beta">A newer build of Super DeepSeek %1$s is available.</string>
+    <string name="bds_update_download">Download</string>
+    <string name="bds_update_later">Later</string>
+    <string name="bds_update_downloading">Downloading the update…</string>
+    <string name="bds_update_download_failed">Download failed (%1$s).</string>
+    <string name="bds_update_need_permission">Grant the install unknown apps permission for Super DeepSeek, then try again.</string>
+    <string name="bds_download_started">Downloading %1$s…</string>
+    <string name="bds_update_install_failed">Could not open the package installer.</string>
+
+    <!-- App Shortcuts -->
+    <string name="shortcut_new_chat">New Chat</string>
+    <string name="shortcut_deep_research">Deep Research</string>
+
+    <!-- Branded boot overlay (shown while the engine page loads) -->
+    <string name="bds_boot_title" translatable="false">Super DeepSeek</string>
+
+    <!-- Linux sandbox (foreground service notification) -->
+    <string name="sandbox_channel">Linux sandbox</string>
+    <string name="sandbox_title">Linux sandbox</string>
+    <string name="sandbox_idle">Idle</string>
+    <string name="sandbox_agent_working">The agent is working</string>
+    <string name="sandbox_stop">Stop</string>
+    <plurals name="sandbox_running">
+        <item quantity="one">Running %d command</item>
+        <item quantity="other">Running %d commands</item>
+    </plurals>
+
+    <!-- Isolated artifact viewer (GeneratedAppActivity) -->
+    <string name="viewer_close">Close</string>
+    <string name="viewer_untitled">Artifact</string>
+    <string name="viewer_subtitle">Isolated app · HTML</string>
+    <string name="viewer_preview">Preview</string>
+    <string name="viewer_code">Code</string>
+    <string name="viewer_rerun">Re-run</string>
+    <string name="viewer_share">Share</string>
+    <string name="viewer_share_title">Share generated HTML?</string>
+    <string name="viewer_share_message">Review the source for private data. The exported file contains executable code.</string>
+    <string name="viewer_cancel">Cancel</string>
+    <string name="viewer_share_chooser">Share application</string>
+</resources>

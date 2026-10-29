@@ -1,0 +1,44 @@
+/* ==========================================================================
+   Super DeepSeek — our-skin.css  (RETIRED — intentionally empty)
+
+   Decision (user, after live testing): the engine's own design frame — this
+   fork's already-branded drawer, sheets, settings and controls — is the app's
+   design. Every custom color / geometry override that used to live here sat
+   on top of the official page's own palette and caused patchwork: a dark body
+   in light mode, mis-tinted official bars, and a drawer that no longer fit
+   phone screens. All of it is removed.
+
+   Functional shaping (hiding out-of-scope entries, trimming redundant rows,
+   repairing raw i18n keys) lives in UiPolish.kt, not here.
+   ========================================================================== */
+
+/* ==========================================================================
+   Mixed-script text (Arabic + Bengali/English in one reply)
+   sd-native.js gives each paragraph the direction of the script it is mostly
+   written in (dir + data-sd-bidi): an Arabic verse reads right-to-left, the
+   Bengali sentence around it stays left-to-right, and brackets stay with the
+   words they enclose. Paragraphs made of several lines decide line by line.
+   ========================================================================== */
+[data-sd-bidi] {
+  text-align: start;
+}
+[data-sd-bidi="lines"] {
+  unicode-bidi: plaintext;
+}
+li[data-sd-bidi="rtl"] {
+  list-style-position: inside;
+}
+/* A bold/italic/link run keeps its own direction and its brackets. */
+.ds-markdown :is(strong, b, em, i, a, del, s, u, mark),
+.bds-message-overlay :is(strong, b, em, i, a, del, s, u, mark) {
+  unicode-bidi: plaintext;
+}
+.ds-markdown :is(pre, code, .md-code-block),
+.bds-message-overlay :is(pre, code, .md-code-block) {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.ds-markdown pre,
+.bds-message-overlay pre {
+  text-align: left;
+}

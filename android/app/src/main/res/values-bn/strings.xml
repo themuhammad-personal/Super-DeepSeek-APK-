@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ইন-অ্যাপ আপডেট সংক্রান্ত মেসেজ -->
+    <string name="bds_update_title">নতুন আপডেট পাওয়া গেছে</string>
+    <string name="bds_update_message">Super DeepSeek %1$s সংস্করণটি এখন পাওয়া যাচ্ছে। আপনার বর্তমান সংস্করণ %2$s।</string>
+    <string name="bds_update_message_beta">Super DeepSeek %1$s-এর একটি নতুন বিল্ড পাওয়া গেছে।</string>
+    <string name="bds_update_download">ডাউনলোড</string>
+    <string name="bds_update_later">পরে</string>
+    <string name="bds_update_downloading">আপডেট ডাউনলোড হচ্ছে…</string>
+    <string name="bds_update_download_failed">ডাউনলোড ব্যর্থ হয়েছে (%1$s)।</string>
+    <string name="bds_update_need_permission">Super DeepSeek-এর জন্য অজানা অ্যাপ ইনস্টল করার অনুমতি দিন, তারপর আবার চেষ্টা করুন।</string>
+    <string name="bds_download_started">%1$s ডাউনলোড হচ্ছে…</string>
+    <string name="bds_update_install_failed">প্যাকেজ ইনস্টলার চালু করা যায়নি।</string>
+
+    <!-- Linux sandbox (foreground service notification) -->
+    <string name="sandbox_channel">লিনাক্স স্যান্ডবক্স</string>
+    <string name="sandbox_title">লিনাক্স স্যান্ডবক্স</string>
+    <string name="sandbox_idle">নিষ্ক্রিয়</string>
+    <string name="sandbox_agent_working">এজেন্ট কাজ করছে</string>
+    <string name="sandbox_stop">থামান</string>
+    <plurals name="sandbox_running">
+        <item quantity="one">%dটি কমান্ড চলছে</item>
+        <item quantity="other">%dটি কমান্ড চলছে</item>
+    </plurals>
+
+    <!-- App Shortcuts -->
+    <string name="shortcut_new_chat">নতুন চ্যাট</string>
+    <string name="shortcut_deep_research">গভীর গবেষণা</string>
+
+    <!-- Isolated artifact viewer (GeneratedAppActivity) -->
+    <string name="viewer_close">বন্ধ করুন</string>
+    <string name="viewer_untitled">আর্টিফ্যাক্ট</string>
+    <string name="viewer_subtitle">আলাদা অ্যাপ · HTML</string>
+    <string name="viewer_preview">প্রিভিউ</string>
+    <string name="viewer_code">কোড</string>
+    <string name="viewer_rerun">আবার চালান</string>
+    <string name="viewer_share">শেয়ার</string>
+    <string name="viewer_share_title">তৈরি করা HTML শেয়ার করবেন?</string>
+    <string name="viewer_share_message">ব্যক্তিগত তথ্য আছে কিনা সোর্সটা দেখে নিন। এক্সপোর্ট করা ফাইলে চালানো যায় এমন কোড আছে।</string>
+    <string name="viewer_cancel">বাতিল</string>
+    <string name="viewer_share_chooser">অ্যাপ শেয়ার করুন</string>
+</resources>

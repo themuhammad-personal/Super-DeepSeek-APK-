@@ -1,0 +1,37 @@
+node_modules/
+dist/
+dist-android/
+.vercel/
+.tanstack/
+.env
+*.log
+
+# bds-sync.sh working clone of the upstream engine source
+.bds-upstream/
+
+# design-preview generated cascade copies (regenerate via setup.sh)
+design-preview/content.css
+design-preview/our-skin.css
+design-preview/runtime-styles.css
+design-preview/sd-genui.css
+
+# CI failure reports are uploaded as workflow artifacts, never committed
+android/ci-debug/
+
+# Linux sandbox runtime, fetched by scripts/fetch_sandbox_deps.py (CI)
+android/app/src/main/jniLibs/
+android/app/src/main/assets/sandbox/
+
+# Staged at build time from android/app/src/main/bds-assets (CI does this)
+android/app/src/main/assets/bds/
+
+# Python bytecode
+__pycache__/
+qa/
+android/local.properties
+
+# Release signing keys never go into the repository: CI reads the BDS_KEYSTORE
+# Actions secret (base64 of the .jks). Keep your local copy somewhere safe.
+*.jks
+*.keystore
+.playwright-cli/

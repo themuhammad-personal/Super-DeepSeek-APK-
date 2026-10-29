@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same launch palette in the night theme — the app boots dark always. -->
+    <style name="Theme.SuperDeepSeek" parent="Theme.Material3.DayNight" />
+
+    <style name="Theme.SuperDeepSeek.NoActionBar" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/bds_window_bg</item>
+        <item name="android:colorBackground">@color/bds_window_bg</item>
+    </style>
+</resources>

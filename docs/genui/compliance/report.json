@@ -1,0 +1,20 @@
+{
+  "summary": {
+    "measuredAt": "2026-10-20T18:26:47.987Z",
+    "source": "/home/user/deepseek-genui/docs/genui/compliance/samples",
+    "samples": 0,
+    "visualExpected": 0,
+    "proseExpected": 0,
+    "usedTypedProtocol": 0,
+    "fullyCompliant": 0,
+    "renderableAnyway": 0,
+    "rawFallbackOnly": 0,
+    "noVisual": 0,
+    "truncated": 0,
+    "typedBlocks": 0,
+    "typedBlocksValid": 0,
+    "proseFalsePositives": 0
+  },
+  "errors": {},
+  "rows": []
+}

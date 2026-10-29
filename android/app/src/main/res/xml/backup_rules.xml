@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and lower. Encrypted MCP credentials are device-bound (Keystore
+     key is never backed up), so they are excluded from backups entirely. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="sds_secure_credentials.xml" />
+</full-backup-content>

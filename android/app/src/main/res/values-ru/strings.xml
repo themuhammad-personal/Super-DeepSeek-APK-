@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="bds_update_title">Доступно обновление</string>
+    <string name="bds_update_message">Доступна версия Super DeepSeek %1$s. У вас установлена %2$s.</string>
+    <string name="bds_update_message_beta">Доступна новая сборка Super DeepSeek %1$s.</string>
+    <string name="bds_update_download">Скачать</string>
+    <string name="bds_update_later">Позже</string>
+    <string name="bds_update_downloading">Загрузка обновления…</string>
+    <string name="bds_update_download_failed">Не удалось скачать (%1$s).</string>
+    <string name="bds_update_need_permission">Разрешите установку из неизвестных источников для Super DeepSeek и повторите попытку.</string>
+    <string name="bds_update_install_failed">Не удалось открыть установщик пакетов.</string>
+    <string name="bds_download_started">Загрузка %1$s…</string>
+
+    <!-- App Shortcuts -->
+    <string name="shortcut_new_chat">Новый чат</string>
+    <string name="shortcut_deep_research">Глубокое исследование</string>
+
+    <!-- Linux sandbox (foreground service notification) -->
+    <string name="sandbox_channel">Песочница Linux</string>
+    <string name="sandbox_title">Песочница Linux</string>
+    <string name="sandbox_idle">Простаивает</string>
+    <string name="sandbox_agent_working">Агент работает</string>
+    <string name="sandbox_stop">Остановить</string>
+    <plurals name="sandbox_running">
+        <item quantity="one">Выполняется %d команда</item>
+        <item quantity="few">Выполняются %d команды</item>
+        <item quantity="many">Выполняется %d команд</item>
+        <item quantity="other">Выполняется %d команды</item>
+    </plurals>
+
+    <!-- Isolated artifact viewer (GeneratedAppActivity) -->
+    <string name="viewer_close">Закрыть</string>
+    <string name="viewer_untitled">Артефакт</string>
+    <string name="viewer_subtitle">Изолированное приложение · HTML</string>
+    <string name="viewer_preview">Просмотр</string>
+    <string name="viewer_code">Код</string>
+    <string name="viewer_rerun">Перезапустить</string>
+    <string name="viewer_share">Поделиться</string>
+    <string name="viewer_share_title">Поделиться созданным HTML?</string>
+    <string name="viewer_share_message">Проверьте исходный код на личные данные. Экспортированный файл содержит исполняемый код.</string>
+    <string name="viewer_cancel">Отмена</string>
+    <string name="viewer_share_chooser">Поделиться приложением</string>
+</resources>

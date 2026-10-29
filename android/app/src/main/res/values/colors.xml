@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Launch palette. The system splash and the window use the chat's default
+      dark background (MainActivity.PAGE_DARK_DEFAULT), so "tap icon → splash →
+      launch screen" has no white flash and no colour jump. Once the real chat
+      colour has been measured on the device, the launch screen eases into it.
+      launcher_background is the adaptive-icon backdrop.
+    -->
+    <color name="launcher_background">#1E1F23</color>
+    <color name="bds_splash_bg">#1E1F23</color>
+    <color name="bds_window_bg">#1E1F23</color>
+</resources>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- The launcher artwork is a full-bleed square by design (it is the adaptive
+         icon's foreground on its own dark backdrop); a themed/monochrome icon
+         needs separate artwork. Revisit together with an icon redesign. -->
+    <issue id="IconLauncherShape" severity="ignore" />
+    <issue id="MonochromeLauncherIcon" severity="ignore" />
+</lint>

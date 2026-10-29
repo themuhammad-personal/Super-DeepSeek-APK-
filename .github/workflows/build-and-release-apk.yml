@@ -1,0 +1,540 @@
+name: Build and Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - "arena/**"
+      - "audit/**"
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to GitHub Releases (leave OFF for branch test builds)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build & Verify APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+          cache-dependency-path: |
+            android/**/*.gradle*
+            android/**/gradle-wrapper.properties
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - name: Write Android local.properties
+        run: printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/local.properties
+      - name: Install NPM Dependencies
+        run: npm ci
+      - name: Engine unit tests + compliance harness self-test
+        run: |
+          npm run test:engine
+          npm run test:scripts
+          npm run test:compliance-harness
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      - name: Generative UI acceptance tests (Chromium)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run genui:acceptance
+      - name: Upload GenUI acceptance screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: genui-acceptance
+          path: qa/genui
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Stage Super DeepSeek engine assets
+        run: |
+          mkdir -p android/app/src/main/assets
+          rm -rf android/app/src/main/assets/bds
+          cp -r android/app/src/main/bds-assets/bds android/app/src/main/assets/bds
+          echo "=== Engine assets staged ==="
+          ls -lh android/app/src/main/assets/bds/
+      - name: Fetch Linux sandbox runtime (proot, libtalloc, Alpine manifest)
+        # Termux proot/libtalloc .debs (SHA-256 checked, mirror fallback) become
+        # jniLibs/<abi>/lib*.so; the Alpine minirootfs is downloaded by the app on
+        # first use. A failure here only disables the sandbox, so it must not
+        # block the build — but it is surfaced loudly.
+        continue-on-error: true
+        run: |
+          if ! python3 scripts/fetch_sandbox_deps.py; then
+            echo "::warning::Linux sandbox runtime could not be fetched; this build ships without the sandbox."
+            exit 1
+          fi
+          find android/app/src/main/jniLibs -type f -exec ls -l {} +
+      - name: Report 16 KB page-size readiness (Android 15+ devices)
+        # Google Play refuses updates whose native libraries are not 16 KB
+        # aligned from 2027-02-01. The libraries come from Termux, so this is
+        # reported, never silently assumed - and never blocks the build, which
+        # would leave the app with no way to ship a fix.
+        if: always()
+        run: |
+          total=0; bad=0
+          while IFS= read -r f; do
+            total=$((total+1))
+            align=$(readelf -lW "$f" | awk '/^  LOAD/ {print $NF}' | sort -u | tail -1)
+            case "$align" in
+              0x4000|0x10000|0x20000|0x40000|0x100000) ;;
+              *) bad=$((bad+1)); echo "::warning file=$f::PT_LOAD alignment ${align:-unknown} is below 16 KB";;
+            esac
+          done < <(find android/app/src/main/jniLibs -name '*.so' 2>/dev/null | sort)
+          echo "native libraries: $total, below 16 KB alignment: $bad"
+          if [ "$total" -eq 0 ]; then echo "::warning::no native libraries found: the Linux sandbox is not in this build"; fi
+          # Also in the run summary: the job log is not always reachable, and this
+          # decides whether the sandbox loads on 16 KB-page phones.
+          {
+            echo "### 16 KB page-size readiness"
+            echo ""
+            echo "| ABI | library | PT_LOAD align | 16 KB |"
+            echo "|---|---|---|---|"
+            while IFS= read -r f; do
+              align=$(readelf -lW "$f" | awk '/^  LOAD/ {print $NF}' | sort -u | tail -1)
+              case "$align" in
+                0x4000|0x10000|0x20000|0x40000|0x100000) ok="yes";;
+                *) ok="**no**";;
+              esac
+              echo "| $(basename "$(dirname "$f")") | $(basename "$f") | ${align:-?} | $ok |"
+            done < <(find android/app/src/main/jniLibs -name '*.so' 2>/dev/null | sort)
+            echo ""
+            echo "Libraries are upstream Termux builds; a 4 KB alignment cannot be fixed here."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Make Gradle Wrapper Executable
+        working-directory: android
+        run: chmod +x ./gradlew
+      - name: Run Android Unit Tests
+        id: unittests
+        working-directory: android
+        run: |
+          set -o pipefail
+          if ! ./gradlew --no-daemon testDebugUnitTest 2>&1 | tee /tmp/gradle-unit.log; then
+            # Surface compile errors and failed tests as annotations (readable
+            # from the run page and the checks API without downloading logs).
+            grep -E '^e: |FAILED$|Error|Exception|expected' /tmp/gradle-unit.log | head -60 | while IFS= read -r line; do
+              line="${line//'%'/'%25'}"; echo "::error::${line}"
+            done
+            exit 1
+          fi
+
+      - name: Upload unit-test reports on failure
+        # Inspect failures from the run page (Artifacts) instead of committing
+        # generated reports back into the repository.
+        if: failure() && steps.unittests.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-reports
+          path: |
+            /tmp/gradle-unit.log
+            android/app/build/reports/tests/testDebugUnitTest
+            android/app/build/test-results/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Verify release commit is on trusted main history
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+        run: |
+          set -eu
+          git fetch --no-tags --unshallow origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::Refusing permanent signing for a release commit that is not reachable from main."
+            exit 1
+          fi
+          echo "Release ref points to a commit already present in main."
+
+      # Publishable APKs must use the permanent signing identity. A one-off CI key is
+      # acceptable only for PR/manual test artifacts, which are never published.
+      - name: Prepare permanent release signing key
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && inputs.publish == true && github.ref == 'refs/heads/main')
+        working-directory: android
+        env:
+          BDS_KEYSTORE: ${{ secrets.BDS_KEYSTORE }}
+          BDS_KEYSTORE_PASSWORD: ${{ secrets.BDS_KEYSTORE_PASSWORD }}
+          BDS_KEY_ALIAS: ${{ secrets.BDS_KEY_ALIAS }}
+          BDS_KEY_PASSWORD: ${{ secrets.BDS_KEY_PASSWORD }}
+        run: |
+          set -eu
+          for name in BDS_KEYSTORE BDS_KEYSTORE_PASSWORD BDS_KEY_ALIAS BDS_KEY_PASSWORD; do
+            if [ -z "$(printenv "$name" || true)" ]; then
+              echo "::error::Required signing secret $name is missing; refusing to build a publishable APK."
+              exit 1
+            fi
+          done
+          printf '%s' "$BDS_KEYSTORE" | base64 --decode > ci-release.jks
+          test -s ci-release.jks || { echo "::error::Decoded signing keystore is empty."; exit 1; }
+          {
+            printf 'BDS_KEYSTORE_PASSWORD=%s\n' "$BDS_KEYSTORE_PASSWORD"
+            printf 'BDS_KEY_ALIAS=%s\n' "$BDS_KEY_ALIAS"
+            printf 'BDS_KEY_PASSWORD=%s\n' "$BDS_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+          echo "Permanent release signing key is ready."
+
+      - name: Prepare temporary signing key for non-publishing checks
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.publish != true) || (github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v'))
+        working-directory: android
+        run: |
+          set -eu
+          password=$(openssl rand -hex 24)
+          keytool -genkeypair -noprompt -keystore ci-release.jks -alias ci-test-only \
+            -keyalg RSA -keysize 2048 -validity 2 \
+            -storepass "$password" -keypass "$password" \
+            -dname "CN=SuperDeepSeek CI Test, OU=Non-publishing, O=SuperDeepSeek, C=BD"
+          {
+            printf 'BDS_KEYSTORE_PASSWORD=%s\n' "$password"
+            printf 'BDS_KEY_ALIAS=ci-test-only\n'
+            printf 'BDS_KEY_PASSWORD=%s\n' "$password"
+          } >> "$GITHUB_ENV"
+          echo "Temporary signing key is ready for this non-publishing check only."
+      - name: Build Android Release APK
+        working-directory: android
+        run: |
+          set -o pipefail
+          if ! ./gradlew --no-daemon assembleRelease -PbdsBuildId=${{ github.run_number }} 2>&1 | tee /tmp/gradle-release.log; then
+            grep -E '^e: |^w: .*(error)|FAILED|Error' /tmp/gradle-release.log | head -40 | while IFS= read -r line; do
+              line="${line//'%'/'%25'}"; echo "::error::${line}"
+            done
+            exit 1
+          fi
+        env:
+          BDS_REQUIRE_RELEASE_SIGNING: 'true'
+      - name: Prepare APK and Compute Checksums
+        id: prep
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          APK_RAW=$(find android/app/build/outputs/apk/release -name "*release*.apk" ! -name "*unaligned*" | head -n 1)
+          if [ -z "$APK_RAW" ]; then
+            APK_RAW=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          fi
+          if [ -z "$APK_RAW" ]; then
+            echo "Error: No release APK found in android/app/build/outputs/apk/release!"
+            exit 1
+          fi
+          APK_NAME="super-deepseek-latest.apk"
+          cp "$APK_RAW" "$APK_NAME"
+          sha256sum "$APK_NAME" > "${APK_NAME}.sha256"
+          echo "apk_path=$APK_NAME" >> "$GITHUB_OUTPUT"
+          echo "checksum_path=${APK_NAME}.sha256" >> "$GITHUB_OUTPUT"
+          echo "--- Prepared Artifacts ---"
+          ls -lh "$APK_NAME" "${APK_NAME}.sha256"
+          cat "${APK_NAME}.sha256"
+          echo "=== APK contents ==="
+          unzip -l "$APK_NAME" | grep -E "assets/bds/|lib/" | head -n 20
+          echo "=== Native libraries (sandbox) ==="
+          unzip -l "$APK_NAME" | grep -E "lib/.*\.so|assets/sandbox" || echo "::warning::APK has no sandbox runtime"
+      - name: Verify APK Signature
+        run: |
+          $ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose "${{ steps.prep.outputs.apk_path }}"
+      - name: Gate publishable APK identity, checksum, signature, and sandbox
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && inputs.publish == true && github.ref == 'refs/heads/main')
+        env:
+          APK_PATH: ${{ steps.prep.outputs.apk_path }}
+          EXPECTED_CERT_SHA256: 75ebff1ca33e27e8f14d98122dc5e6db811a1c77f37133b7bbbd24cd75ba3803
+        run: |
+          set -euo pipefail
+          test -s "$APK_PATH"
+          test -s "$APK_PATH.sha256"
+          sha256sum --check "$APK_PATH.sha256"
+
+          EXPECTED_VERSION="$(node -p "require('./package.json').version")"
+          BADGING="$($ANDROID_HOME/build-tools/36.0.0/aapt dump badging "$APK_PATH")"
+          APP_ID="$(printf '%s\n' "$BADGING" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)"
+          APK_VERSION="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p" | head -n 1)"
+          APK_VERSION_CODE="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+          VERSION_CODE_BASE="$(sed -nE 's/.*versionCode = \(([0-9_]+)L \+ bdsBuildId\).*/\1/p' android/app/build.gradle.kts | tr -d '_')"
+          if [[ "$APP_ID" != "com.superdeepseek.app" ]]; then
+            echo "::error::Unexpected APK applicationId: $APP_ID"
+            exit 1
+          fi
+          if [[ "$APK_VERSION" != "$EXPECTED_VERSION" ]]; then
+            echo "::error::APK versionName $APK_VERSION does not match package.json $EXPECTED_VERSION"
+            exit 1
+          fi
+          if [[ -z "$VERSION_CODE_BASE" || -z "$APK_VERSION_CODE" || "$APK_VERSION_CODE" -ne "$((VERSION_CODE_BASE + GITHUB_RUN_NUMBER))" ]]; then
+            echo "::error::APK versionCode does not match the current CI build identity"
+            exit 1
+          fi
+
+          APK_ENTRIES="$(unzip -Z1 "$APK_PATH")"
+          grep -qx 'assets/sandbox/rootfs.json' <<< "$APK_ENTRIES" || { echo "::error::APK is missing the Alpine rootfs manifest"; exit 1; }
+          grep -Eq '^lib/[^/]+/libproot\.so$' <<< "$APK_ENTRIES" || { echo "::error::APK is missing libproot.so"; exit 1; }
+          grep -Eq '^lib/[^/]+/libtalloc\.so$' <<< "$APK_ENTRIES" || { echo "::error::APK is missing libtalloc.so"; exit 1; }
+
+          CERT_OUTPUT="$($ANDROID_HOME/build-tools/36.0.0/apksigner verify --verbose --print-certs "$APK_PATH")"
+          CERT_SHA256="$(printf '%s\n' "$CERT_OUTPUT" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          if [[ -z "$CERT_SHA256" || "$CERT_SHA256" != "$EXPECTED_CERT_SHA256" ]]; then
+            echo "::error::APK signer certificate does not match the pinned trusted release identity"
+            printf 'Expected signer SHA-256: %s\nActual signer SHA-256: %s\n' "$EXPECTED_CERT_SHA256" "${CERT_SHA256:-missing}"
+            exit 1
+          fi
+          echo "Release APK identity, versionCode, checksum, pinned signer, and Linux sandbox payload verified."
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: super-deepseek-apk
+          path: |
+            *.apk
+            *.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  android-instrumented-tests:
+    name: Android Emulator Tests (API ${{ matrix.api-level }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep the API 30/34/35 emulator coverage required by the stability plan.
+        api-level: [30, 34, 35]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+          cache-dependency-path: |
+            android/**/*.gradle*
+            android/**/gradle-wrapper.properties
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - name: Write Android local.properties and stage engine
+        run: |
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/local.properties
+          mkdir -p android/app/src/main/assets
+          rm -rf android/app/src/main/assets/bds
+          cp -r android/app/src/main/bds-assets/bds android/app/src/main/assets/bds
+          chmod +x android/gradlew
+      - name: Enable KVM for hardware-accelerated emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run Android instrumented tests on API ${{ matrix.api-level }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash -o pipefail -c 'cd android && ./gradlew --no-daemon connectedDebugAndroidTest --stacktrace --info 2>&1 | tee /tmp/android-instrumented.log'
+      - name: Annotate Android instrumentation failures
+        if: failure()
+        run: |
+          if [ -f /tmp/android-instrumented.log ]; then
+            grep -E 'FAILURES|Tests run:|FAILED|Exception|Assertion|Expected:|Actual:|INSTRUMENTATION_STATUS|Error in |Process:' /tmp/android-instrumented.log | tail -80 > /tmp/android-instrumented-failures.log || true
+            if [ -s /tmp/android-instrumented-failures.log ]; then
+              while IFS= read -r line; do echo "::error::$line"; done < /tmp/android-instrumented-failures.log
+            else
+              tail -40 /tmp/android-instrumented.log | while IFS= read -r line; do echo "::error::$line"; done
+            fi
+          else
+            echo '::error::Android instrumentation runner did not create /tmp/android-instrumented.log'
+          fi
+      - name: Summarize Android instrumentation result
+        if: always()
+        run: |
+          if [ -f /tmp/android-instrumented.log ]; then
+            {
+              echo '### Android instrumentation log (tail)'
+              echo '```text'
+              tail -180 /tmp/android-instrumented.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Android instrumentation log was not created.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload Android instrumentation reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-instrumented-test-reports
+          path: |
+            /tmp/android-instrumented.log
+            android/app/build/reports/androidTests/connected/**
+            android/app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  lint:
+    # Diagnostics only: Android Lint and Kotlin compiler warnings, reported as
+    # annotations. Never blocks the build or the release.
+    name: Lint (report only)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+          cache-dependency-path: |
+            android/**/*.gradle*
+            android/**/gradle-wrapper.properties
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+      - name: Android Lint
+        working-directory: android
+        run: |
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          chmod +x ./gradlew
+          ./gradlew --no-daemon lintDebug -Dorg.gradle.jvmargs=-Xmx3g 2>&1 | tee /tmp/gradle-lint.log || true
+          python3 ../scripts/ci_annotate_lint.py app/build/reports/lint-results-debug.xml /tmp/gradle-lint.log
+
+  release:
+    name: Publish Release
+    needs: [build-apk, android-instrumented-tests]
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && inputs.publish == true && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: super-deepseek-release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Confirm main release is not superseded
+        id: release_freshness
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
+          if [[ "$current_main_sha" == "$GITHUB_SHA" ]]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping superseded release commit $GITHUB_SHA; main is now $current_main_sha."
+          fi
+      - uses: actions/download-artifact@v8
+        if: github.ref != 'refs/heads/main' || steps.release_freshness.outputs.current == 'true'
+        with:
+          name: super-deepseek-apk
+      - id: rel_cfg
+        if: github.ref != 'refs/heads/main' || steps.release_freshness.outputs.current == 'true'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            printf 'tag=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            printf 'title=Super DeepSeek v%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            printf 'tag=latest\n' >> "$GITHUB_OUTPUT"
+            printf 'title=Super DeepSeek (Continuous Build #%s)\n' "$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v3
+        if: github.ref != 'refs/heads/main' || steps.release_freshness.outputs.current == 'true'
+        with:
+          tag_name: ${{ steps.rel_cfg.outputs.tag }}
+          name: ${{ steps.rel_cfg.outputs.title }}
+          body: |
+            ### Super DeepSeek for Android
+
+            **Version:** `${{ steps.rel_cfg.outputs.version }}`
+            **Build:** `${{ github.run_number }}`
+            **Commit:** `${{ github.sha }}`
+            **Source code:** The automatically generated GitHub `Source code (zip)` and `Source code (tar.gz)` links below match this release commit.
+
+            The official DeepSeek chat, supercharged: the Super DeepSeek engine runs on
+            top of chat.deepseek.com inside a native Android shell.
+
+            #### Highlights
+            - An AI agent with its own Linux (Alpine) that writes, runs and tests code until the task is done; Stop is always there
+            - Linux Studio: terminal, files and live preview
+            - Slash commands, snippets and a command palette
+            - Memory, personas, system prompts, skills and projects
+            - MCP servers, Deep Research, web fetch, code runners and file tools
+            - Export chats (Markdown, PDF, HTML, image), light and dark themes
+            - Native file / camera picker, downloads, haptics and in-app updates
+
+            Install on Android 8.0+ and sign in with your DeepSeek account.
+            Builds are signed with the same key, so each one installs as an update.
+
+            > **Coming from a build before the package rename?** The app is now `com.superdeepseek.app`,
+            > so it installs next to the old `com.betterdeepseek.app` instead of over it. Export your
+            > settings in the old app (Advanced settings → Integrations & backup → Export), import them
+            > here, then uninstall the old app. Details in the README.
+
+            <!-- bds-build-id: ${{ github.run_number }} -->
+          files: |
+            *.apk
+            *.sha256
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sync latest tag with release commit and remove redundant source archives
+        if: steps.rel_cfg.outputs.tag == 'latest' && steps.release_freshness.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # GitHub's built-in Source code ZIP/TAR archives are generated from the tag.
+          # Advance latest only after the APK release assets and notes have been published.
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" \
+            -f sha="$GITHUB_SHA" \
+            -F force=true >/dev/null
+
+          tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/latest" --jq '.object.sha')"
+          if [[ "$tag_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::latest tag points to ${tag_sha}, expected ${GITHUB_SHA}"
+            exit 1
+          fi
+
+          # Remove the duplicate ZIP/checksum assets from older releases; keep
+          # GitHub's standard Source code (zip) and Source code (tar.gz) links.
+          # Remove old standalone source bundles from latest and all version-tagged
+          # releases; GitHub's built-in Source code ZIP/TAR links are kept.
+          releases="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+            --jq '.[] | select(.tag_name == "latest" or (.tag_name | startswith("v"))) | [.id, .tag_name] | @tsv')"
+          delete_failed=false
+          while IFS="$(printf '\t')" read -r release_id release_tag; do
+            [[ -n "$release_id" ]] || continue
+            stale_assets="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets" \
+              --jq '.[] | select(.name | test("^super-deepseek-source-v[^/]+\\.zip(\\.sha256)?$")) | [.id, .name] | @tsv')"
+            [[ -n "$stale_assets" ]] || continue
+
+            while IFS="$(printf '\t')" read -r asset_id asset_name; do
+              [[ -n "$asset_id" ]] || continue
+              if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null; then
+                echo "Removed redundant source asset from ${release_tag}: ${asset_name}"
+              else
+                echo "::error::Failed to remove redundant source asset from ${release_tag}: ${asset_name}"
+                delete_failed=true
+              fi
+            done <<< "$stale_assets"
+          done <<< "$releases"
+
+          if [[ "$delete_failed" == true ]]; then
+            echo "::error::Some redundant source assets could not be removed; review the release log."
+            exit 1
+          fi
+
+          echo "Verified latest tag $tag_sha matches release commit $GITHUB_SHA."

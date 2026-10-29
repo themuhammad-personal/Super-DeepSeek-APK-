@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Generative UI — engine acceptance fixture</title>
+<link rel="stylesheet" href="../android/app/src/main/bds-assets/bds/sd-genui.css">
+<style>
+  /* Minimal stand-in for chat.deepseek.com chrome. NOT the official chat. */
+  :root{color-scheme:light}
+  body{margin:0;background:#fff;color:#1f2329;font:16px/1.65 system-ui,-apple-system,sans-serif}
+  body.dark{background:#16181d;color:#e6e8ec;color-scheme:dark}
+  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 120px}
+  header small{letter-spacing:.14em;text-transform:uppercase;opacity:.6;font-size:11px}
+  header h1{font-size:28px;letter-spacing:-.03em;line-height:1.2;margin:6px 0 4px}
+  .ds-message{margin:18px 0}
+  .user-bubble{background:color-mix(in srgb,currentColor 7%,transparent);border-radius:18px;padding:10px 14px;margin-left:auto;max-width:80%}
+  .md-code-block{border-radius:12px;overflow:hidden;border:1px solid color-mix(in srgb,currentColor 12%,transparent);margin:12px 0}
+  .md-code-block-banner{display:flex;justify-content:space-between;padding:6px 12px;font-size:12px;background:color-mix(in srgb,currentColor 5%,transparent)}
+  pre{margin:0;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+  textarea#composer{position:fixed;left:12px;right:12px;bottom:12px;height:56px;border-radius:16px;padding:10px;font:inherit;box-sizing:border-box}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><small>Engine acceptance fixture · not the official chat</small><h1>Ideas, made tangible.</h1><p>Real renderer assets, DeepSeek-shaped markdown DOM, mocked native bridge.</p></header>
+  <div id="chat"></div>
+</div>
+<textarea id="composer" aria-label="Message"></textarea>
+<script>
+  // Mock of the native bridge surface used by GenUI. Records every call.
+  (function(){
+    var store = {};
+    try { store = JSON.parse(sessionStorage.getItem('mockStore') || '{}'); } catch (_) {}
+    function save(){ sessionStorage.setItem('mockStore', JSON.stringify(store)); }
+    window.__bridgeCalls = [];
+    if (new URLSearchParams(location.search).get('bridge') === '0') return;
+    window.AndroidBridge = {
+      getStorage: function(k){ return Object.prototype.hasOwnProperty.call(store,k) ? store[k] : null; },
+      setStorage: function(k,v){ store[k]=String(v); save(); },
+      removeStorage: function(k){ delete store[k]; save(); },
+      downloadBlob: function(b64,mime,name){ __bridgeCalls.push({m:'downloadBlob',mime:mime,name:name,b64:b64}); },
+      shareFile: function(b64,mime,name,title){ __bridgeCalls.push({m:'shareFile',mime:mime,name:name,title:title,b64:b64}); return true; },
+      openGeneratedApp: function(html){ __bridgeCalls.push({m:'openGeneratedApp',html:html}); return true; },
+      mcpCredentialStatus: function(s){ __bridgeCalls.push({m:'mcpCredentialStatus',server:s}); return JSON.stringify({stored:true,session:false}); }
+    };
+  })();
+  window.confirm = function(){ return true; };
+</script>
+<script>
+  // Mock of sd-native's __sdBridgeFetch for MCP traffic (tools/list, tools/call, resources/read).
+  (function(){
+    var APP = '<!doctype html><html><head><meta charset="utf-8"><style>body{font:15px system-ui;margin:0;padding:14px;color:#1b1c1f}h2{font-size:16px;font-weight:500;margin:0 0 6px}.t{font-size:34px;font-weight:500}button{margin-top:10px;margin-right:6px;min-height:36px;padding:0 14px;border-radius:999px;border:1px solid #ccc;background:#fff}</style></head><body>' +
+      '<h2 id="city">Loading…</h2><div class="t" id="temp">–</div><div id="ctx"></div><button id="r">Refresh</button><button id="m">Ask follow-up</button>' +
+      '<script>var id=0,p={};function rq(method,params){return new Promise(function(res,rej){var i=++id;p[i]={res:res,rej:rej};parent.postMessage({jsonrpc:"2.0",id:i,method:method,params:params||{}},"*")})}' +
+      'function nt(method,params){parent.postMessage({jsonrpc:"2.0",method:method,params:params||{}},"*")}' +
+      'window.addEventListener("message",function(e){var m=e.data;if(!m||m.jsonrpc!=="2.0")return;if(m.id&&p[m.id]&&!m.method){var q=p[m.id];delete p[m.id];m.error?q.rej(m.error):q.res(m.result);return}' +
+      'if(m.method==="ui/notifications/tool-input"){document.getElementById("ctx").textContent="input: "+JSON.stringify(m.params.arguments)}' +
+      'if(m.method==="ui/notifications/tool-result"){var s=m.params.structuredContent||{};document.getElementById("city").textContent=s.city;document.getElementById("temp").textContent=s.temp+"°C";nt("ui/notifications/size-changed",{height:document.body.scrollHeight})}});' +
+      'rq("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"weather",version:"1"},appCapabilities:{}}).then(function(r){window.__init=r;document.body.setAttribute("data-host",r.hostInfo.name);document.body.setAttribute("data-theme",r.hostContext.theme);nt("ui/notifications/initialized",{})});' +
+      'document.getElementById("r").onclick=function(){rq("tools/call",{name:"refresh_forecast",arguments:{city:"Dhaka"}}).then(function(r){document.getElementById("temp").textContent=r.structuredContent.temp+"°C";document.body.setAttribute("data-refreshed","1")},function(e){document.body.setAttribute("data-refreshed","denied:"+e.message)})};' +
+      'document.getElementById("m").onclick=function(){rq("ui/message",{role:"user",content:[{type:"text",text:"What should I wear in Dhaka today?"}]}).then(function(){document.body.setAttribute("data-msg","ok")},function(e){document.body.setAttribute("data-msg","err:"+e.message)})};' +
+      '<\/script></body></html>';
+    // OpenAI Apps SDK (skybridge) template: talks to window.openai only.
+    var SKY = '<!doctype html><html><head><meta charset="utf-8"></head><body style="font:15px system-ui;margin:0;padding:12px"><ul id="l"></ul><div id="meta"></div><div id="mode"></div><div id="pref"></div><button id="fs">Full</button>' +
+      '<script>var o=window.openai;document.getElementById("l").innerHTML=(o.toolOutput.places||[]).map(function(x){return "<li>"+x+"</li>"}).join("");' +
+      'document.getElementById("meta").textContent="total:"+o.toolResponseMetadata.total+" input:"+JSON.stringify(o.toolInput)+" theme:"+o.theme;' +
+      'window.addEventListener("openai:set_globals",function(e){if(e.detail.globals.displayMode)document.getElementById("mode").textContent="mode:"+e.detail.globals.displayMode});' +
+      'o.callTool("prefs_read",{}).then(function(r){document.getElementById("pref").textContent="unit:"+r.structuredContent.unit;o.setWidgetState({seen:1})});' +
+      'document.getElementById("fs").onclick=function(){o.requestDisplayMode({mode:"fullscreen"})};' +
+      '<\/script></body></html>';
+    window.__mcpCalls = [];
+    window.__sdBridgeFetch = function(payload){
+      __mcpCalls.push(payload);
+      if (payload.type === 'bds-mcp-list-tools') return Promise.resolve({ ok: true, tools: [
+        { name: 'get_weather', title: 'Weather', description: 'Current weather', inputSchema: { type: 'object' }, _meta: { ui: { resourceUri: 'ui://weather/app.html' } } },
+        { name: 'refresh_forecast', description: 'Refresh (model + app; asks consent)', inputSchema: { type: 'object' }, _meta: { ui: { resourceUri: 'ui://weather/app.html', visibility: ['model', 'app'] } } },
+        { name: 'prefs_read', description: 'App-only read (auto-allowed, hidden from the model)', inputSchema: { type: 'object' }, _meta: { ui: { visibility: ['app'] } } },
+        { name: 'pizza_list', title: 'Pizza list', description: 'OpenAI Apps SDK template tool', inputSchema: { type: 'object' }, _meta: { 'openai/outputTemplate': 'ui://pizza/list.html', 'openai/widgetAccessible': true } },
+        { name: 'plain_tool', description: 'No UI', inputSchema: { type: 'object' } },
+        { name: 'legacy_dash', description: 'UI declared only on the result (deployed MCP-UI era servers)', inputSchema: { type: 'object' } },
+        { name: 'bad_dash', description: 'Result points at a non-ui:// resource', inputSchema: { type: 'object' } } ] });
+      if (payload.type === 'bds-frame-fetch') {
+        if (/\/img\.png$/.test(payload.url)) return Promise.resolve({ ok: true, status: 200, url: payload.url, contentType: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' });
+        return Promise.resolve({ ok: true, status: 200, url: payload.url, contentType: 'application/json', text: JSON.stringify({ temp: 31, method: payload.method, path: new URL(payload.url).pathname }) });
+      }
+      if (payload.type === 'bds-mcp-read-resource' && payload.resourceUri === 'ui://pizza/list.html') return Promise.resolve({ ok: true, mimeType: 'text/html+skybridge', text: SKY, meta: {} });
+      if (payload.type === 'bds-mcp-call' && payload.toolName === 'pizza_list') return Promise.resolve({ ok: true, result: { content: [{ type: 'text', text: '2 pizzerias' }], structuredContent: { places: ['Tony', 'Luigi'] }, _meta: { total: 2 } } });
+      if (payload.type === 'bds-mcp-call' && payload.toolName === 'prefs_read') return Promise.resolve({ ok: true, result: { structuredContent: { unit: 'C' }, content: [] } });
+      if (payload.type === 'bds-mcp-read-resource') return Promise.resolve(payload.resourceUri === 'ui://weather/app.html' ? { ok: true, mimeType: 'text/html;profile=mcp-app', text: APP, meta: { ui: { prefersBorder: true, csp: { connectDomains: ['https://api.weather.example', 'http://evil.local', 'https://*.bad'] } } } } : { ok: false, error: 'not found' });
+      if (payload.type === 'bds-mcp-call' && payload.toolName === 'legacy_dash') return Promise.resolve({ ok: true, result: { _meta: { ui: { resourceUri: 'ui://weather/app.html' } }, content: [{ type: 'text', text: 'Dashboard ready' }], structuredContent: { city: 'Chattogram', temp: 28 } } });
+      if (payload.type === 'bds-mcp-call' && payload.toolName === 'bad_dash') return Promise.resolve({ ok: true, result: { _meta: { ui: { resourceUri: 'https://evil.example/app.html' } }, content: [{ type: 'text', text: 'x' }] } });
+      if (payload.type === 'bds-mcp-call') return Promise.resolve({ ok: true, result: { content: [{ type: 'text', text: 'Dhaka 31°C' }], structuredContent: { city: 'Dhaka', temp: payload.toolName === 'refresh_forecast' ? 29 : 31 } } });
+      return Promise.resolve({ ok: false, error: 'unsupported' });
+    };
+  })();
+</script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-protocol.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-svg.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-prompt.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-host.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-frame.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-viewer.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-inline.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-visuals.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-artifacts.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-mcp.js"></script>
+<script src="../android/app/src/main/bds-assets/bds/sd-genui-panel.js"></script>
+<script>
+  // Helpers used by scripts/genui-browser-check.mjs to build DeepSeek-shaped DOM.
+  window.fx = {
+    message: function(){ var m=document.createElement('div'); m.className='ds-message'; var md=document.createElement('div'); md.className='ds-markdown'; m.appendChild(md); document.getElementById('chat').appendChild(m); return md; },
+    para: function(md, text){ var p=document.createElement('p'); p.textContent=text; md.appendChild(p); return p; },
+    // DeepSeek shape: .md-code-block > .md-code-block-banner > span(lang) + pre (no language class)
+    block: function(md, lang, text){
+      var c=document.createElement('div'); c.className='md-code-block';
+      var b=document.createElement('div'); b.className='md-code-block-banner'; var s=document.createElement('span'); s.textContent=lang; b.appendChild(s);
+      var copy=document.createElement('span'); var btn=document.createElement('span'); btn.textContent='Copy'; copy.appendChild(btn); b.appendChild(copy);
+      var pre=document.createElement('pre'); pre.textContent=text; c.append(b,pre); md.appendChild(c); return pre;
+    },
+    // Generic markdown shape: pre > code.language-x
+    stream: function(pre, text){ pre.textContent = text; },
+    classic: function(md, lang, text){ var pre=document.createElement('pre'); var code=document.createElement('code'); code.className='language-'+lang; code.textContent=text; pre.appendChild(code); md.appendChild(pre); return code; }
+  };
+</script>
+</body>
+</html>

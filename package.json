@@ -1,0 +1,30 @@
+{
+  "name": "super-deepseek",
+  "private": true,
+  "version": "2.72.0",
+  "description": "Super DeepSeek \u2014 Claude-class native client for DeepSeek (Android + Generative UI engine)",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run android:stage-engine && bash design-preview/setup.sh",
+    "dev": "node scripts/preview-server.mjs",
+    "start": "node scripts/preview-server.mjs",
+    "test": "npm run test:engine && npm run test:scripts && npm run test:compliance-harness",
+    "test:engine": "node --test android/app/src/test/js/*.test.mjs",
+    "test:compliance-harness": "node scripts/genui-compliance.mjs --self-test",
+    "genui:acceptance": "node scripts/genui-browser-check.mjs",
+    "genui:compliance": "node scripts/genui-compliance.mjs",
+    "genui:mcp-live": "node scripts/mcp-live-check.mjs",
+    "android:stage-engine": "rm -rf android/app/src/main/assets/bds && mkdir -p android/app/src/main/assets && cp -r android/app/src/main/bds-assets/bds android/app/src/main/assets/bds",
+    "android:fetch-sandbox": "python3 scripts/fetch_sandbox_deps.py",
+    "android:assemble:release": "cd android && ./gradlew assembleRelease",
+    "test:scripts": "python3 scripts/fetch_sandbox_deps.py --self-test && node --test scripts/ci-signing-policy.test.mjs scripts/release-readiness.test.mjs"
+  },
+  "devDependencies": {
+    "acorn": "^8.14.0",
+    "playwright": "^1.62.0"
+  }
+}

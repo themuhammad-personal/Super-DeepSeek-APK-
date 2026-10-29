@@ -1,0 +1,8 @@
+{
+  "name": "Super DeepSeek",
+  "description": "Enhanced AI chat workspace with an autonomous Linux Studio agent, live Generative UI widgets and artifacts, slash commands, persistent memory, and MCP tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
