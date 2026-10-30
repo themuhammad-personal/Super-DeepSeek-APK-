@@ -3,3 +3,4 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 -keep class com.superdeepseek.app.WebViewBridge { *; }
+-keep class com.superdeepseek.app.BridgeGate { *; }

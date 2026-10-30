@@ -35,3 +35,8 @@ android/local.properties
 *.jks
 *.keystore
 .playwright-cli/
+
+# AI Studio preview workspace artifacts & uploaded debug media (never push to GitHub)
+.aistudio/
+public/assets/aistudio/
+bun.lock

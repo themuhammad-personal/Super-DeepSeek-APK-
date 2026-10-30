@@ -19,6 +19,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -118,4 +119,23 @@ test('the build docs name the current version', () => {
     notes.includes(majorMinor),
     `BUILD-NOTES.md does not mention ${majorMinor}: a maintainer following it builds a different release than the one in package.json`
   );
+});
+
+test('package-lock.json stays aligned with package.json for clean npm ci on GitHub Actions', () => {
+  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
+  assert.equal(lock.version, PKG.version, `package-lock.json root version ${lock.version} != ${PKG.version}`);
+  assert.equal(
+    lock.packages?.['']?.version,
+    PKG.version,
+    `package-lock.json packages[""].version ${lock.packages?.['']?.version} != ${PKG.version}`
+  );
+});
+
+test('every bundled JS engine script in bds-assets/bds parses cleanly as a classic WebView script', () => {
+  const jsFiles = fs.readdirSync(BUNDLE).filter((name) => name.endsWith('.js')).sort();
+  assert.ok(jsFiles.length >= 20, `expected >= 20 bundled JS files, found ${jsFiles.length}`);
+  for (const name of jsFiles) {
+    const src = fs.readFileSync(path.join(BUNDLE, name), 'utf8');
+    assert.doesNotThrow(() => new vm.Script(src, { filename: name }), `${name} failed classic JS syntax parse`);
+  }
 });

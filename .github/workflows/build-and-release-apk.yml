@@ -6,11 +6,13 @@ on:
       - main
       - "arena/**"
       - "audit/**"
+      - "**"
     tags:
       - "v*"
   pull_request:
     branches:
       - main
+      - "**"
   workflow_dispatch:
     inputs:
       publish:
@@ -402,6 +404,9 @@ jobs:
         working-directory: android
         run: |
           printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          mkdir -p app/src/main/assets
+          rm -rf app/src/main/assets/bds
+          cp -r app/src/main/bds-assets/bds app/src/main/assets/bds
           chmod +x ./gradlew
           ./gradlew --no-daemon lintDebug -Dorg.gradle.jvmargs=-Xmx3g 2>&1 | tee /tmp/gradle-lint.log || true
           python3 ../scripts/ci_annotate_lint.py app/build/reports/lint-results-debug.xml /tmp/gradle-lint.log

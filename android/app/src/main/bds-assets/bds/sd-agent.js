@@ -90,15 +90,79 @@
 
   // ── Exact arguments from the raw reply ─────────────────────────────────────
 
+  function isAttrQuoteClose(s, afterQuote) {
+    var rest = s.slice(afterQuote);
+    return /^\s*(?:\/?>|$)/.test(rest) ||
+      /^\s+[A-Za-z_][A-Za-z0-9_:-]*(?:\s*=\s*["']|=[^\s>"'])/.test(rest);
+  }
+
   function parseAttrs(raw) {
     var a = {};
-    var re = /([A-Za-z0-9_:-]+)\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
-    var m;
-    while ((m = re.exec(raw))) a[m[1]] = m[3] !== undefined ? m[3] : (m[4] !== undefined ? m[4] : m[5]);
+    var s = String(raw || '');
+    var i = 0;
+    while (i < s.length) {
+      while (i < s.length && /[\s/]/.test(s[i])) i++;
+      var ks = i;
+      while (i < s.length && /[A-Za-z0-9_:-]/.test(s[i])) i++;
+      if (i === ks) { i++; continue; }
+      var key = s.slice(ks, i);
+      while (i < s.length && /\s/.test(s[i])) i++;
+      if (s[i] !== '=') continue;
+      i++;
+      while (i < s.length && /\s/.test(s[i])) i++;
+      if (i >= s.length) break;
+      var q = s[i];
+      if (q === '"' || q === "'") {
+        var vs = ++i;
+        var val = '';
+        while (i < s.length) {
+          if (s[i] === '\\' && s[i + 1] === q) {
+            val += s.slice(vs, i) + q;
+            i += 2;
+            vs = i;
+            continue;
+          }
+          if (s[i] === q && isAttrQuoteClose(s, i + 1)) break;
+          i++;
+        }
+        val += s.slice(vs, i);
+        if (i < s.length && s[i] === q) i++;
+        a[key] = val;
+      } else {
+        var uvs = i;
+        while (i < s.length && !/[\s"'>]/.test(s[i])) i++;
+        a[key] = s.slice(uvs, i);
+      }
+    }
     return a;
   }
 
-  /** Every <SDS:AUTO:MCP …>body</SDS:AUTO:MCP> (or self-closing) tag, in order. */
+  function scanMcpBodyEnd(s, from) {
+    var inStr = false;
+    var esc = false;
+    var close = /<\/[BS]DS:(?:AUTO:)?MCP\s*>/gi;
+    var open = /<[BS]DS:(?:AUTO:)?MCP\b/gi;
+    for (var i = from; i < s.length; i++) {
+      var c = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; continue; }
+      if (c !== '<') continue;
+      close.lastIndex = i;
+      var cm = close.exec(s);
+      if (cm && cm.index === i) return { bodyEnd: i, end: i + cm[0].length };
+      open.lastIndex = i;
+      var om = open.exec(s);
+      if (om && om.index === i) return { bodyEnd: i, end: i };
+    }
+    return { bodyEnd: s.length, end: s.length };
+  }
+
+  /** Every <SDS:AUTO:MCP …>body</SDS:AUTO:MCP> (or self-closing / args=) tag, in order. */
   function parseTags(text) {
     var out = [];
     var s = String(text || '');
@@ -109,24 +173,32 @@
       var q = null;
       for (; i < s.length; i++) {
         var c = s[i];
-        if (q) { if (c === q) q = null; }
-        else if (c === '"' || c === "'") q = c;
+        if (q) {
+          if (c === '\\' && s[i + 1] === q) { i++; continue; }
+          if (c === q && isAttrQuoteClose(s, i + 1)) q = null;
+        } else if (c === '"' || c === "'") q = c;
         else if (c === '>') break;
       }
       if (i >= s.length) break;
       var attrsRaw = s.slice(m.index + m[0].length, i);
       var selfClosing = /\/\s*$/.test(attrsRaw);
       if (selfClosing) attrsRaw = attrsRaw.replace(/\/\s*$/, '');
+      var attrs = parseAttrs(attrsRaw);
+      var hasInlineArgs = Boolean(attrs.args || attrs.base64Args || attrs.base64args);
       var body = '';
       var end = i + 1;
       if (!selfClosing) {
-        var close = /<\/[BS]DS:(?:AUTO:)?MCP\s*>/gi;
-        close.lastIndex = i + 1;
-        var cm = close.exec(s);
-        if (cm) { body = s.slice(i + 1, cm.index); end = cm.index + cm[0].length; }
+        if (hasInlineArgs) {
+          var immClose = s.slice(end).match(/^\s*<\/[BS]DS:(?:AUTO:)?MCP\s*>/i);
+          if (immClose) end += immClose[0].length;
+        } else {
+          var b = scanMcpBodyEnd(s, end);
+          body = s.slice(end, b.bodyEnd);
+          end = b.end;
+        }
       }
-      out.push({ attrs: parseAttrs(attrsRaw), body: body });
-      re.lastIndex = end;
+      out.push({ attrs: attrs, body: body });
+      re.lastIndex = Math.max(end, m.index + 1);
     }
     return out;
   }

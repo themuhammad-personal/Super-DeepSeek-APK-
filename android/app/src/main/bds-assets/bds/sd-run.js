@@ -31,7 +31,7 @@
   var SHOW_LAST = 3;          // finished steps listed on a running card
   var STORE_KEY = 'sd_run_v1';
   var STORE_MAX = 60;         // runs whose timings are remembered
-  var SCAN_MS = 200;
+  var SCAN_MS = 60;
   var AUTO_RE = /\[[BS]DS:AUTO/;
 
   // ── Small helpers ──────────────────────────────────────────────────────────
@@ -100,10 +100,19 @@
 
   function isSandbox(url) { return /^sandbox/i.test(String(url || '')); }
 
+  function isAttrQuoteClose(s, afterQuote) {
+    var rest = s.slice(afterQuote);
+    return /^\s*(?:\/?>|\/\s*$|$)/.test(rest) ||
+      /^\s+[A-Za-z0-9_:-]+\s*(?:=|\/?>|$)/.test(rest) ||
+      /^\s*[A-Za-z0-9_:-]+\s*=/.test(rest);
+  }
+
   /** Parse only real attribute names; text inside quoted values is never an attribute. */
-  function hasToolAttribute(attrs) {
+  function parseAttrMeta(attrs) {
     var s = String(attrs || '');
     var i = 0;
+    var hasTool = false;
+    var hasArgs = false;
     while (i < s.length) {
       while (i < s.length && /[\s/]/.test(s[i])) i++;
       var keyStart = i;
@@ -117,18 +126,26 @@
       }
       i++;
       while (i < s.length && /\s/.test(s[i])) i++;
+      if (key === 'tool' || key === 'toolname' || key === 'name') hasTool = true;
+      if (key === 'args' || key === 'base64args') hasArgs = true;
       if (i >= s.length) break;
       var q = s[i];
       if (q === '"' || q === "'") {
         i++;
-        while (i < s.length && s[i] !== q) i++;
-        if (i < s.length) i++;
+        while (i < s.length) {
+          if (s[i] === '\\') { i += 2; continue; }
+          if (s[i] === q && isAttrQuoteClose(s, i + 1)) { i++; break; }
+          i++;
+        }
       } else {
         while (i < s.length && !/[\s/]/.test(s[i])) i++;
       }
-      if (key === 'tool' || key === 'toolname' || key === 'name') return true;
     }
-    return false;
+    return { hasTool: hasTool, hasArgs: hasArgs };
+  }
+
+  function hasToolAttribute(attrs) {
+    return parseAttrMeta(attrs).hasTool;
   }
 
   function readMcpOpen(s, start, prefixLength) {
@@ -136,18 +153,39 @@
     var quote = null;
     for (; i < s.length; i++) {
       var c = s[i];
-      if (quote) { if (c === quote) quote = null; }
-      else if (c === '"' || c === "'") quote = c;
+      if (quote) {
+        if (c === '\\') { i++; continue; }
+        if (c === quote && isAttrQuoteClose(s, i + 1)) quote = null;
+      } else if (c === '"' || c === "'") quote = c;
       else if (c === '>') break;
     }
-    if (i >= s.length) return null;
+    if (i >= s.length) {
+      var partialAttrs = s.slice(start + prefixLength);
+      var partialMeta = parseAttrMeta(partialAttrs);
+      var looksLikeStreamingTag = partialMeta.hasTool ||
+        /^\s*(?:$|[A-Za-z0-9_:-]*$|(?:url|server|serverurl|tool|toolname|name|args|base64args)\s*(?:=|$))/i.test(partialAttrs);
+      if (!looksLikeStreamingTag) return null;
+      return {
+        start: start,
+        tagEnd: s.length,
+        end: s.length,
+        attrs: partialAttrs,
+        valid: true,
+        hasArgs: partialMeta.hasArgs,
+        streamingOpen: true,
+        selfClosing: false
+      };
+    }
     var attrs = s.slice(start + prefixLength, i);
+    var meta = parseAttrMeta(attrs);
     return {
       start: start,
       tagEnd: i,
       end: i + 1,
       attrs: attrs,
-      valid: hasToolAttribute(attrs),
+      valid: meta.hasTool,
+      hasArgs: meta.hasArgs,
+      streamingOpen: false,
       selfClosing: /\/\s*$/.test(attrs)
     };
   }
@@ -218,11 +256,18 @@
         continue;
       }
       var end = open.end;
-      if (!open.selfClosing) {
-        var boundary = findMcpBoundary(s, open.end);
-        if (boundary && boundary.type === 'close') end = boundary.end;
-        else if (boundary && boundary.type === 'next') end = boundary.start;
-        else end = s.length;
+      if (open.streamingOpen) {
+        end = s.length;
+      } else if (!open.selfClosing) {
+        if (open.hasArgs) {
+          var closeOnly = /^\s*(?:<\/[BS]DS:(?:AUTO:)?MCP\s*>|<\/?(?:[BS]DS:[A-Za-z0-9_:]*|[BS]DS|[BS]D|[BS])?\s*$)/i.exec(s.slice(open.end));
+          if (closeOnly) end = open.end + closeOnly[0].length;
+        } else {
+          var boundary = findMcpBoundary(s, open.end);
+          if (boundary && boundary.type === 'close') end = boundary.end;
+          else if (boundary && boundary.type === 'next') end = boundary.start;
+          else end = s.length;
+        }
       }
       spans.push({ start: open.start, end: end });
       re.lastIndex = end;
@@ -245,7 +290,8 @@
     if (r === 'assistant') return isProtocolResultText(tx);
     if (r !== 'user') return false;
     return isProtocolResultText(tx) ||
-      /^\[[BS]DS:AUTO(?:\s|\]|_)/i.test(tx) ||
+      /^(?:<(?:SuperDeepSeek|BetterDeepSeek)>\s*)?\[[BS]DS:AUTO(?:\s|\]|_|:)/i.test(tx) ||
+      /^<(?:SuperDeepSeek|BetterDeepSeek)>[\s\S]{0,160}\[[BS]DS:AUTO_MCP_(?:RESULT|ERROR)\]/i.test(tx) ||
       /\bmcp_results?(?:_[A-Za-z0-9_.-]+)?\.txt\b/i.test(tx);
   }
 
@@ -289,10 +335,15 @@
 
   /** The prose of a reply without its tool calls and engine wrappers. */
   function stripTags(text) {
-    var s = String(text || '')
-      .replace(/<[BS]DS:(?:AUTO:)?MCP\b[^>]*\/>/gi, '')
-      .replace(/<[BS]DS:(?:AUTO:)?MCP\b[\s\S]*?(?:<\/[BS]DS:(?:AUTO:)?MCP\s*>|$)/gi, '')
-      .replace(/<(?:SuperDeepSeek|BetterDeepSeek)>[\s\S]*?<\/(?:SuperDeepSeek|BetterDeepSeek)>/gi, '')
+    var raw = String(text || '');
+    var spans = findRawCallSpans(raw);
+    for (var i = spans.length - 1; i >= 0; i--) {
+      raw = raw.slice(0, spans[i].start) + raw.slice(spans[i].end);
+    }
+    var s = raw
+      .replace(/<\/[BS]DS:(?:AUTO:)?MCP\s*>/gi, '')
+      .replace(/<(?:SuperDeepSeek|BetterDeepSeek)>[\s\S]*?(?:<\/(?:SuperDeepSeek|BetterDeepSeek)>|$)/gi, '')
+      .replace(/<[BS]DS:[A-Za-z0-9_:]*$/i, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
     return s.length > MAX_NOTE ? s.slice(0, MAX_NOTE) + '…' : s;
@@ -500,6 +551,8 @@
     if (root.id === 'sd-run-sheet' ||
         (root.classList && (
           root.classList.contains('sd-run-card') ||
+          root.classList.contains('bds-overlay-host') ||
+          root.classList.contains('bds-message-overlay') ||
           root.classList.contains('bds-mcp-loading') ||
           root.classList.contains('bds-mcp-result-card') ||
           root.classList.contains('bds-mcp-error-card')
@@ -518,7 +571,7 @@
   }
 
   function visibleText(el) {
-    var parts = el.querySelectorAll('.fbb737a4, .ds-markdown, .ds-collapsible-text');
+    var parts = el && el.querySelectorAll ? el.querySelectorAll('.fbb737a4, .ds-markdown, .ds-collapsible-text') : [];
     var s = '';
     for (var i = 0; i < parts.length; i++) if (!parts[i].closest('.bds-hidden-message')) s += parts[i].textContent || '';
     return norm(s);
@@ -526,11 +579,15 @@
 
   /** An automatic message of the engine (tool results, an agent nudge). */
   function isAutoUser(el, role, text) {
+    if (!el) return false;
     role = role || roleOf(el);
-    if (el.querySelector('.bds-mcp-result-card, .bds-mcp-error-card')) return true;
+    if (el.hasAttribute && el.hasAttribute('data-bds-auto-user')) return true;
+    if (el.querySelector && el.querySelector('.bds-mcp-result-card, .bds-mcp-error-card')) return true;
     if (isAutoUserText(text == null ? protocolText(el) : text, role)) return true;
     // A nudge is wiped by the engine's sanitiser, leaving nothing visible.
-    return !!el.querySelector('.bds-hidden-message') && !visibleText(el);
+    var hiddenSelfOrChild = (el.classList && el.classList.contains('bds-hidden-message')) ||
+      !!(el.querySelector && el.querySelector('.bds-hidden-message'));
+    return role === 'user' && hiddenSelfOrChild && !visibleText(el);
   }
 
   function userText(el) {
@@ -631,6 +688,28 @@
 
   var live = null;          // { key, t0, t1, steps, byId }
   var lastRunKey = null;    // key of the newest rendered run (set by scan)
+  var lastHref = String((typeof location !== 'undefined' && location.href) || '');
+
+  function sidFromHref(h) {
+    var m = String(h || '').match(/\/chat\/s\/([^/?#]+)/);
+    return m ? m[1] : 'new';
+  }
+
+  function syncHref() {
+    var curHref = String((typeof location !== 'undefined' && location.href) || '');
+    if (curHref === lastHref) return;
+    var prevSid = sidFromHref(lastHref);
+    var nextSid = sidFromHref(curHref);
+    lastHref = curHref;
+    if (prevSid === nextSid) return;
+    closeDrawer();
+    if (live && prevSid === 'new' && nextSid !== 'new' && live.key && live.key.indexOf('new|') === 0) {
+      live.key = nextSid + live.key.slice(3);
+      remember(live);
+      return;
+    }
+    live = null;
+  }
 
   function keyFor(text) { return sessionId() + '|' + hash(norm(text).slice(0, 300)); }
 
@@ -644,9 +723,21 @@
 
   function onEvent(d) {
     if (!d || typeof d !== 'object') return;
+    syncHref();
     if (d.phase === 'start') {
+      var sid = sessionId();
       var key = currentKey();
-      if (!live || live.key !== key) live = { key: key, t0: d.at || Date.now(), t1: 0, steps: [], byId: {} };
+      if (!live) {
+        live = { key: key, t0: d.at || Date.now(), t1: 0, steps: [], byId: {} };
+      } else if (live.key !== key) {
+        if (key === sid + '|live' && live.key.indexOf(sid + '|') === 0) {
+          // User message unmounted by virtual scroll during the same session run.
+        } else if (live.key === sid + '|live' && key.indexOf(sid + '|') === 0) {
+          live.key = key;
+        } else {
+          live = { key: key, t0: d.at || Date.now(), t1: 0, steps: [], byId: {} };
+        }
+      }
       if (live.steps.length >= MAX_LIVE_STEPS) return;
       var a = '';
       try { a = JSON.stringify(d.args || {}, null, 2); } catch (_) { a = ''; }
@@ -676,9 +767,12 @@
 
   function runInfo(run, els) {
     var host = els[run.host];
+    var sid = sessionId();
     var uText = run.user >= 0 ? userText(els[run.user]) : '';
     var key = run.user >= 0 ? keyFor(uText) : null;
-    var lv = live && key && live.key === key ? live : null;
+    var lv = live && ((key && live.key === key) ||
+      (run.last && live.key && live.key.indexOf(sid + '|') === 0 && (!key || live.key === sid + '|live'))) ? live : null;
+    if (lv && key && lv.key === sid + '|live') { lv.key = key; remember(lv); }
     var meta = !lv && key ? store[key] : null;
     var steps = lv ? lv.steps : meta && Array.isArray(meta.steps) ? meta.steps : [];
     var running = run.last && ((lv && pendingLive()) || agentActive() || generating());
@@ -810,6 +904,7 @@
   var anyRunning = false;
 
   function scan() {
+    syncHref();
     if (disabled()) { reset(); return; }
     var els = messageEls();
     var list = els.map(function (el) {
@@ -876,7 +971,7 @@
   var scanTimer = null;
   function scheduleScan(soon) {
     if (scanTimer) return;
-    scanTimer = setTimeout(function () { scanTimer = null; try { scan(); } catch (e) { console.warn('[SD run]', e); } }, soon ? 30 : SCAN_MS);
+    scanTimer = setTimeout(function () { scanTimer = null; try { scan(); } catch (e) { console.warn('[SD run]', e); } }, soon ? 16 : SCAN_MS);
   }
   var tickTimer = null;
   function tickSoon() {
@@ -1117,9 +1212,8 @@
       }).observe(document.body, { childList: true, subtree: true, characterData: true });
     }
     // The page is a single-page app: a chat switch changes the URL only.
-    var href = location.href;
     setInterval(function () {
-      if (location.href !== href) { href = location.href; closeDrawer(); live = null; }
+      syncHref();
       if (anyRunning) scheduleScan(false);
     }, 1000);
     scheduleScan(true);
@@ -1146,12 +1240,14 @@
     _restoreHiddenRawNode: restoreHiddenRawNode,
     _isProtocolResultText: isProtocolResultText,
     _isAutoUserText: isAutoUserText,
+    _isAutoUserEl: isAutoUser,
     _classifyMessage: classifyMessage,
     _stripTags: stripTags,
     _callSummary: callSummary,
     _fmtDur: fmtDur,
     _timeline: timeline,
     _cardHtml: cardHtml,
+    _syncHref: syncHref,
     _live: function () { return live; },
   };
 

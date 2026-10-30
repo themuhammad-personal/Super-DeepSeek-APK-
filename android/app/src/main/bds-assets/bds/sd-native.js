@@ -205,25 +205,31 @@
       st.textContent =
         'html.sd-auto-send textarea#chat-input,html.sd-auto-send .ds-textarea textarea,html.sd-auto-send [data-sd-quiet]{' +
         'color:transparent!important;-webkit-text-fill-color:transparent!important;' +
-        'caret-color:transparent!important;max-height:2.6em!important;overflow:hidden!important}' +
+        'caret-color:transparent!important;height:2.4em!important;min-height:0!important;max-height:2.6em!important;overflow:hidden!important;resize:none!important}' +
+        'html.sd-auto-send .ds-textarea,html.sd-auto-send [data-sd-quiet-box]{max-height:56px!important;min-height:0!important;overflow:hidden!important}' +
         'html.sd-auto-send [data-sd-quiet]::placeholder{color:transparent!important}' +
         'html.sd-auto-send [data-sd-quiet-box]::after{content:attr(data-sd-quiet-box);position:absolute;' +
         'left:var(--sdq-l,0);top:var(--sdq-t,0);width:var(--sdq-w,100%);height:var(--sdq-h,100%);' +
-        'box-sizing:border-box;padding:var(--sdq-p,0);display:flex;align-items:center;overflow:hidden;white-space:nowrap;' +
-        'font-size:14px;line-height:1.4;color:currentColor;opacity:.55;pointer-events:none;' +
+        'box-sizing:border-box;padding:var(--sdq-p,0);display:flex;align-items:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;' +
+        'font-size:13.5px;font-weight:500;line-height:1.4;color:var(--bds-text-secondary,currentColor);opacity:.72;pointer-events:none;' +
         'animation:sd-quiet-pulse 1.6s ease-in-out infinite}' +
-        '@keyframes sd-quiet-pulse{0%,100%{opacity:.35}50%{opacity:.7}}';
+        '@keyframes sd-quiet-pulse{0%,100%{opacity:.42}50%{opacity:.78}}';
       (document.head || document.documentElement).appendChild(st);
       watchQuiet();
-      // The moment the user touches or types in a field, it is theirs again:
-      // never hide what they type, even if an engine send is still retrying.
+      // Only genuine typing/pasting hands the composer back to the user;
+      // accidental touch/pointerdown while scrolling over the bottom bar must
+      // never unmask an in-flight automatic result payload.
       if (typeof document.addEventListener === 'function') {
         var takeOver = function (ev) {
           if (!ev || !ev.isTrusted || !isTextField(ev.target)) return;
+          if (ev.type === 'keydown' && ev.key != null) {
+            var k = String(ev.key);
+            if (k.length > 1 && k !== 'Backspace' && k !== 'Delete' && k !== 'Enter' && k !== 'Process' && k !== 'Unidentified') return;
+          }
           var root = document.documentElement;
           if (root && root.classList && root.classList.contains('sd-auto-send')) root.classList.remove('sd-auto-send');
         };
-        ['pointerdown', 'keydown', 'beforeinput'].forEach(function (type) { document.addEventListener(type, takeOver, true); });
+        ['keydown', 'beforeinput', 'paste'].forEach(function (type) { document.addEventListener(type, takeOver, true); });
       }
     } catch (_) {}
   })();

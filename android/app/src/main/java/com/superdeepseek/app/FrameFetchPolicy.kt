@@ -40,7 +40,7 @@ internal object FrameFetchPolicy {
         if (url.scheme != "https" && url.scheme != "http") return false
         if (url.username.isNotEmpty() || url.password.isNotEmpty()) return false
         val host = url.host.lowercase()
-        if (allowLoopback && (host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]")) {
+        if (allowLoopback && isLoopbackHost(host)) {
             return url.port in 1..65535
         }
         val port = url.port
@@ -50,6 +50,14 @@ internal object FrameFetchPolicy {
         // Literal IPs are checked here too (Dns is not consulted for them).
         literalAddress(host)?.let { if (isBlockedAddress(it)) return false }
         return true
+    }
+
+    private fun isLoopbackHost(host: String): Boolean {
+        val h = host.removePrefix("[").removeSuffix("]")
+        if (h == "localhost" || h.endsWith(".localhost") || h == "::1" || h == "0:0:0:0:0:0:0:1") return true
+        literalAddress(h)?.let { return it.isLoopbackAddress }
+        val resolved = runCatching { InetAddress.getAllByName(h) }.getOrNull() ?: return false
+        return resolved.isNotEmpty() && resolved.all { it.isLoopbackAddress }
     }
 
     private fun literalAddress(host: String): InetAddress? {

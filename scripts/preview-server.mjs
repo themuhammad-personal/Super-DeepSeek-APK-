@@ -112,6 +112,50 @@ const BUG_LEDGER = [
     proof: 'fetch_sandbox_deps.py --self-test PASS · SandboxToolsTest.kt added',
     scope: 'verified-js-plus-ci-kotlin',
   },
+  {
+    id: 'BUG-09',
+    severity: 'High',
+    pillar: 'P3 · Multi-Step Agent ও Collapsible Auto-Bubble Hiding',
+    files: 'content.js (ict, pct, Vhe, sdMcpBlocks), sd-run.js (isAutoUserText, isAutoUser)',
+    titleBn: 'সংক্ষিপ্ত (.ds-collapsible-text) অটো-রেজাল্ট বাবলে কাঁচা [SDS:AUTO] প্রোটোকল প্রকাশ ও রান-কার্ড ভেঙে যাওয়া রোধ',
+    cause: 'DeepSeek truncated long user bubbles inside .ds-collapsible-text before [/SDS:AUTO_MCP_RESULT]</SuperDeepSeek>; React re-renders skipped hj-cached ict(e), pct(e) applied .bds-collapsed-user-message (display:block!important overriding .bds-hidden-message), and isAutoUserText rejected truncated envelopes—exposing raw JSON bubbles and splitting one run into multiple cards.',
+    fix: 'Marked auto bubbles with data-bds-auto-user="1", re-wiped/re-hid on React reconciliation, blocked .bds-collapsed-user-message on auto bubbles, extended Vhe to .fbb737a4/.ds-collapsible-text, and taught sd-run.js & sdMcpBlocks truncated envelope detection.',
+    proof: 'agent-ux-hardening.test.mjs (UX-01, UX-02, UX-07) PASS',
+    scope: 'verified-js',
+  },
+  {
+    id: 'BUG-10',
+    severity: 'High',
+    pillar: 'P3 & P4 · Streaming <SDS:AUTO:MCP> Parser ও Overlay Anti-Flicker',
+    files: 'content.js (Iwe, Hq, dd, sdMcpBodyEnd, axe, oxe, pxe), sd-agent.js (parseAttrs, parseTags), sd-run.js (readMcpOpen, findRawCallSpans)',
+    titleBn: 'স্ট্রিমিং ও সিঙ্গেল-কোটেড args (\'frames -> MP4\') টুল কলে কাঁচা Python/JSON কোড লিক ও কার্ড ফ্লিকার বন্ধ',
+    cause: 'Iwe fell back to unescaped Hq on unclosed streaming tags so inner quotes and "->" arrows prematurely closed <SDS:AUTO:MCP>; pxe negative lookahead flipped containsControlTags=false on partial <SDS:AUTO: prefixes; open-only args= calls swallowed subsequent calls.',
+    fix: 'Boundary-aware quote scanning across content.js/sd-agent.js/sd-run.js, streaming partial-tail containsControlTags retention, in-flight auto:mcp renderableBlock masking, and 60ms/16ms sd-run scan cadence.',
+    proof: 'agent-ux-hardening.test.mjs (UX-03, UX-07) PASS',
+    scope: 'verified-js',
+  },
+  {
+    id: 'BUG-11',
+    severity: 'High',
+    pillar: 'P3 & P5 · Wire-Level Auto-Payload Substitution ও Compact Quiet Composer',
+    files: 'content.js (sdWireAuto, sdNc, $S), injected.js (bds:queue-auto-payload, I), sd-native.js (ensureQuietStyle, takeOver)',
+    titleBn: 'মেসেজ বক্সে বিশাল অটো-রেজাল্ট টাইপ হয়ে বক্স ফুলে ওঠা ও স্ক্রল টাচে কাঁচা কোড দেখা যাওয়া বন্ধ',
+    cause: 'Stuffing multi-KB [SDS:AUTO_MCP_RESULT] payloads directly into #chat-input expanded the mobile composer across half the screen, while pointerdown in sd-native.js stripped html.sd-auto-send during casual touch-scrolling.',
+    fix: 'Queued full auto payloads in injected.js via bds:queue-auto-payload while placing only a compact 1-line [SDS:AUTO_TURN:<id>] sentinel in the composer, locked quiet composer height, and removed pointerdown from takeOver.',
+    proof: 'agent-ux-hardening.test.mjs (UX-04, UX-05, UX-07) PASS · sd-native.test.mjs PASS',
+    scope: 'verified-js',
+  },
+  {
+    id: 'BUG-12',
+    severity: 'Medium',
+    pillar: 'P3 · Live Run Continuity (URL Session Transition & Virtual Scroll)',
+    files: 'sd-run.js (syncHref, onEvent, runInfo)',
+    titleBn: 'নতুন চ্যাট সেশন URL পরিবর্তন ও ভার্চুয়াল স্ক্রলিংয়ে চলমান এজেন্ট স্টেপ হারিয়ে যাওয়া রোধ',
+    cause: 'Transitioning from / ("new") to /a/chat/s/<id> or virtual-list unmounting of the initial user prompt caused sd-run.js to discard live step state.',
+    fix: 'Added syncHref() key migration from new|... to <sessionId>|... and preserved live.key when virtual scroll unmounts earlier rows.',
+    proof: 'agent-ux-hardening.test.mjs (UX-06) PASS',
+    scope: 'verified-js',
+  },
 ];
 
 function readStatus() {
@@ -128,7 +172,7 @@ function readStatus() {
     packageId: 'com.superdeepseek.app',
     version: pkg.version,
     branch: 'audit/world-class-hardening-20261029',
-    engineTestsPassed: 237,
+    engineTestsPassed: 246,
     scriptTestsPassed: 13,
     chromiumAcceptance: acceptance ? { passed: acceptance.passed, total: acceptance.total, at: acceptance.at } : { passed: 29, total: 29, at: null },
     nativeModulesCount: nativeModules.length,
@@ -363,7 +407,7 @@ function renderAuditHtml(status) {
         <div class="metric">
           <div class="metric-label">JS Engine ও Regression Tests</div>
           <div class="metric-val ok-text">${status.engineTestsPassed} / ${status.engineTestsPassed} PASS</div>
-          <div class="metric-note">৫টি নতুন fail-before → pass-after টেস্টসহ</div>
+          <div class="metric-note">১৪টি নতুন regression ও CI গার্ডসহ</div>
         </div>
         <div class="metric">
           <div class="metric-label">Real Chromium GenUI Acceptance</div>
@@ -387,8 +431,8 @@ function renderAuditHtml(status) {
           <h2 id="ledger-heading">শনাক্তকৃত বাগ ও রুট-কজ লেজার (<span id="visible-count">${status.bugs.length}</span> / ${status.bugs.length})</h2>
           <div class="controls">
             <button type="button" class="filter-btn" data-filter="all" aria-pressed="true">সব (${status.bugs.length})</button>
-            <button type="button" class="filter-btn" data-filter="High" aria-pressed="false">High Severity (3)</button>
-            <button type="button" class="filter-btn" data-filter="Medium" aria-pressed="false">Medium Severity (5)</button>
+            <button type="button" class="filter-btn" data-filter="High" aria-pressed="false">High Severity (${status.bugs.filter((b) => b.severity === 'High').length})</button>
+            <button type="button" class="filter-btn" data-filter="Medium" aria-pressed="false">Medium Severity (${status.bugs.filter((b) => b.severity === 'Medium').length})</button>
             <label for="bug-search" style="position:absolute;left:-9999px">বাগ খুঁজুন</label>
             <input id="bug-search" class="search-input" type="search" placeholder="ফাইল, বাগ ID বা কীওয়ার্ড খুঁজুন…">
           </div>
@@ -404,17 +448,25 @@ function renderAuditHtml(status) {
           <div class="panel">
             <h3 class="ok-text">এই সেশনে সরাসরি চালানো ও প্রমাণিত (Verified Locally)</h3>
             <ul>
-              <li><strong>Node Engine Suite:</strong> <code>npm test</code> — ২৩৭/২৩৭টি ইঞ্জিন টেস্ট, ১৩/১৩টি রিলিজ ও সাইনিং পলিসি টেস্ট, Python ELF ১৬ KB সেলফ-টেস্ট এবং GenUI কমপ্লায়েন্স সেলফ-টেস্ট সবুজ।</li>
+              <li><strong>Node Engine Suite:</strong> <code>npm test</code> — ${status.engineTestsPassed}/${status.engineTestsPassed}টি ইঞ্জিন টেস্ট, ১৩/১৩টি রিলিজ ও সাইনিং পলিসি টেস্ট, Python ELF ১৬ KB সেলফ-টেস্ট এবং GenUI কমপ্লায়েন্স সেলফ-টেস্ট সবুজ।</li>
               <li><strong>Headless Chromium GenUI Suite:</strong> <code>npm run genui:acceptance</code> — ২৯/২৯টি অ্যাক্সেপ্টেন্স চেক বাস্তব ব্রাউজারে পাস।</li>
-              <li><strong>AST Syntax Verification:</strong> পরিবর্তিত প্রতিটি JS ইঞ্জিন ফাইল (<code>content.js</code>, <code>injected.js</code>, <code>sd-genui-viewer.js</code>, <code>sd-native.js</code>, <code>sd-run.js</code>) <code>acorn</code> পার্সারে যাচাইকৃত।</li>
+              <li><strong>AST Syntax Verification:</strong> পরিবর্তিত প্রতিটি JS ইঞ্জিন ফাইল (<code>content.js</code>, <code>injected.js</code>, <code>sd-agent.js</code>, <code>sd-genui-viewer.js</code>, <code>sd-native.js</code>, <code>sd-run.js</code>) <code>acorn</code> পার্সারে যাচাইকৃত।</li>
             </ul>
           </div>
           <div class="panel">
             <h3 class="warn-text">GitHub Actions CI ও বাস্তব Android ফোনে যাচাই আবশ্যক (Not Run Locally)</h3>
             <ul>
-              <li><strong>Gradle JVM / Robolectric Unit Tests:</strong> কন্টেইনারে JDK না থাকায় <code>./gradlew testDebugUnitTest lintDebug</code> GitHub Actions CI-তে (<code>audit/**</code> পুশ বা PR-এ) চালাতে হবে।</li>
-              <li><strong>১৬ KB APK Alignment Gate:</strong> CI-তে <code>fetch_sandbox_deps.py</code> চালিয়ে নতুন APK-তে <code>arm64-v8a</code> ও <code>x86_64</code> সম্পূর্ণ ১৬ KB অ্যালাইনড কি না নিশ্চিত করতে হবে।</li>
+              <li><strong>Gradle JVM / Robolectric Unit Tests:</strong> কন্টেইনারে JDK না থাকায় <code>./gradlew testDebugUnitTest lintDebug</code> GitHub Actions CI-তে যেকোনো ব্রাঞ্চ পুশ বা PR-এ স্বয়ংক্রিয়ভাবে চলবে।</li>
+              <li><strong>১৬ KB APK Alignment Gate:</strong> CI-তে <code>fetch_sandbox_deps.py</code> চালিয়ে নতুন APK-তে <code>arm64-v8a</code> ও <code>x86_64</code> সম্পূর্ণ ১৬ KB অ্যালাইনড কি না নিশ্চিত হবে।</li>
               <li><strong>Physical Phone Checklist (D1–D14):</strong> আসল ফোনে DeepSeek CAPTCHA/OTP, রোটেশন ও কীবোর্ড, SAF ফাইল ইমপোর্ট/শেয়ার, <code>proot</code> কমান্ড/Stop এবং ইন-প্লেস আপগ্রেড পরীক্ষা করতে হবে।</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3 class="ok-text">GitHub Push ও Actions APK Build প্রস্তুত (.github/workflows/build-and-release-apk.yml)</h3>
+            <ul>
+              <li><strong>যেকোনো ব্রাঞ্চে Push / PR (Secret ছাড়াই APK বিল্ড):</strong> <code>main</code> ব্যতীত যেকোনো ব্রাঞ্চে পুশ করলে স্বয়ংক্রিয়ভাবে অস্থায়ী টেস্ট কী তৈরি করে <code>super-deepseek-apk</code> আর্টিফ্যাক্ট হিসেবে ইনস্টলযোগ্য APK বিল্ড ও যাচাই হবে।</li>
+              <li><strong><code>main</code> অথবা <code>v*</code> ট্যাগে Push (Official Release):</strong> রিপোজিটরিতে ৪টি Actions Secret (<code>BDS_KEYSTORE</code>, <code>BDS_KEYSTORE_PASSWORD</code>, <code>BDS_KEY_ALIAS</code>, <code>BDS_KEY_PASSWORD</code>) সেট করা থাকলে স্থায়ী সাইনিং কী যাচাই করে সরাসরি GitHub Releases-এ APK পাবলিশ হবে।</li>
+              <li><strong>গোপনীয়তা সুরক্ষা:</strong> <code>.gitignore</code>-এ ব্যক্তিগত স্ক্রিন-রেকর্ডিং/স্ক্রিনশট (<code>public/assets/aistudio/</code>) এবং কন্টেইনার আর্টিফ্যাক্ট বাদ রাখা হয়েছে যেন GitHub-এ পুশ করলে ব্যক্তিগত মিডিয়া কখনোই লিক না হয়।</li>
             </ul>
           </div>
         </div>

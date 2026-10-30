@@ -85,7 +85,11 @@ class FrameFetchPolicyTest {
     @Test fun `allowLoopback permits localhost for MockWebServer only while still blocking private and metadata IPs`() {
         assertTrue(FrameFetchPolicy.urlAllowed("http://localhost:54321/page".toHttpUrlOrNull(), allowLoopback = true))
         assertTrue(FrameFetchPolicy.urlAllowed("http://127.0.0.1:41234/mcp".toHttpUrlOrNull(), allowLoopback = true))
+        assertTrue(FrameFetchPolicy.urlAllowed("http://127.0.1.1:41234/mcp".toHttpUrlOrNull(), allowLoopback = true))
+        assertTrue(FrameFetchPolicy.urlAllowed("http://[::1]:41234/mcp".toHttpUrlOrNull(), allowLoopback = true))
         assertFalse(FrameFetchPolicy.urlAllowed("http://localhost:54321/page".toHttpUrlOrNull(), allowLoopback = false))
+        assertFalse(FrameFetchPolicy.urlAllowed("http://127.0.1.1:41234/mcp".toHttpUrlOrNull(), allowLoopback = false))
+        assertFalse(FrameFetchPolicy.urlAllowed("http://[::1]:41234/mcp".toHttpUrlOrNull(), allowLoopback = false))
         assertFalse(FrameFetchPolicy.urlAllowed("http://169.254.169.254/latest/meta-data".toHttpUrlOrNull(), allowLoopback = true))
         assertFalse(FrameFetchPolicy.urlAllowed("http://192.168.1.1/admin".toHttpUrlOrNull(), allowLoopback = true))
         assertFalse(FrameFetchPolicy.urlAllowed("http://10.0.0.5/".toHttpUrlOrNull(), allowLoopback = true))
