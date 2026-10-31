@@ -28,11 +28,18 @@
     <string name="sandbox_title">Linux sandbox</string>
     <string name="sandbox_idle">Idle</string>
     <string name="sandbox_agent_working">The agent is working</string>
+    <string name="sandbox_step_status">Step %1$d · %2$s</string>
+    <string name="sandbox_open_studio">Studio</string>
     <string name="sandbox_stop">Stop</string>
     <plurals name="sandbox_running">
         <item quantity="one">Running %d command</item>
         <item quantity="other">Running %d commands</item>
     </plurals>
+
+    <!-- Native offline connectivity guard -->
+    <string name="offline_title">No internet connection</string>
+    <string name="offline_message">Super DeepSeek will automatically reconnect as soon as your network is back.</string>
+    <string name="offline_retry">Try again</string>
 
     <!-- Isolated artifact viewer (GeneratedAppActivity) -->
     <string name="viewer_close">Close</string>

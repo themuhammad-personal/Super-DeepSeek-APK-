@@ -284,11 +284,8 @@ class StudioActivity : ComponentActivity(), Sandbox.Listener {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(cBg)
         }
-        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            WindowInsetsCompat.CONSUMED
-        }
+        ViewCompat.setOnApplyWindowInsetsListener(root, ::applyRootWindowInsets)
+        installSmoothImeInsetAnimation(root)
 
         // Top bar
         val bar = LinearLayout(this).apply {
@@ -338,13 +335,21 @@ class StudioActivity : ComponentActivity(), Sandbox.Listener {
         return root
     }
 
+    private fun tapHaptic(heavy: Boolean = false) {
+        if (prefs.getString(WebViewBridge.KEY_HAPTICS_ENABLED, "1") == "0") return
+        val flag = if (heavy) android.view.HapticFeedbackConstants.LONG_PRESS else android.view.HapticFeedbackConstants.CLOCK_TICK
+        runCatching { window?.decorView?.performHapticFeedback(flag) }
+    }
+
     private fun selectTab(i: Int) {
+        val changed = currentTab != i
         currentTab = i
         tabs.forEachIndexed { k, tv ->
             tv.setTextColor(if (k == i) cText else cMuted)
             tv.background = if (k == i) rounded(cBg, 10f) else null
         }
         pages.forEachIndexed { k, v -> v.visibility = if (k == i) View.VISIBLE else View.GONE }
+        if (changed) tapHaptic(false)
         if (i == 1) loadDir(cwd)
         if (i == 2 && !previewOpened) showPreviewHome(null)
     }
@@ -353,18 +358,22 @@ class StudioActivity : ComponentActivity(), Sandbox.Listener {
         val menu = PopupMenu(this, anchor)
         val enabled = prefs.getString(WebViewBridge.KEY_SANDBOX_ENABLED, "1") != "0"
         val ask = prefs.getString(WebViewBridge.KEY_SANDBOX_MODE, "auto") == "ask"
+        val keepGoing = prefs.getString(WebViewBridge.KEY_AGENT_CONTINUE, "1") != "0"
+        val haptics = prefs.getString(WebViewBridge.KEY_HAPTICS_ENABLED, "1") != "0"
         menu.menu.add(0, 1, 0, t("Sandbox for the AI", "AI-এর জন্য স্যান্ডবক্স")).apply { isCheckable = true; isChecked = enabled }
         menu.menu.add(0, 2, 1, t("Ask before each command", "প্রতিটি কমান্ডের আগে জিজ্ঞেস করুন")).apply { isCheckable = true; isChecked = ask }
-        val keepGoing = prefs.getString(WebViewBridge.KEY_AGENT_CONTINUE, "1") != "0"
         menu.menu.add(0, 4, 2, t("Keep going until the task is done", "কাজ শেষ না হওয়া পর্যন্ত চালিয়ে যাক")).apply { isCheckable = true; isChecked = keepGoing }
-        menu.menu.add(0, 3, 3, t("Reset Linux (deletes all files)…", "লিনাক্স রিসেট (সব ফাইল মুছে যাবে)…"))
+        menu.menu.add(0, 5, 3, t("Haptic feedback", "হ্যাপটিক ভাইব্রেশন")).apply { isCheckable = true; isChecked = haptics }
+        menu.menu.add(0, 3, 4, t("Reset Linux (deletes all files)…", "লিনাক্স রিসেট (সব ফাইল মুছে যাবে)…"))
         menu.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 1 -> prefs.edit().putString(WebViewBridge.KEY_SANDBOX_ENABLED, if (enabled) "0" else "1").apply()
                 2 -> prefs.edit().putString(WebViewBridge.KEY_SANDBOX_MODE, if (ask) "auto" else "ask").apply()
                 3 -> confirmReset()
                 4 -> prefs.edit().putString(WebViewBridge.KEY_AGENT_CONTINUE, if (keepGoing) "0" else "1").apply()
+                5 -> prefs.edit().putString(WebViewBridge.KEY_HAPTICS_ENABLED, if (haptics) "0" else "1").apply()
             }
+            tapHaptic(false)
             refreshStatus()
             true
         }
@@ -393,6 +402,7 @@ class StudioActivity : ComponentActivity(), Sandbox.Listener {
     }
 
     private fun stopAll() {
+        tapHaptic(true)
         Thread { sandbox.killAll() }.start()
         SandboxService.onStopRequested?.invoke()
         restartShellSoon()

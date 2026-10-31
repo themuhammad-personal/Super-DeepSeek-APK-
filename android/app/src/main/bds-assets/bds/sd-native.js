@@ -859,6 +859,102 @@
     if (run && run.catch) run.catch(function (e) { console.error('[SD] native action failed', e); });
   }
 
+  // ── Haptics & Network Connectivity Guard ──────────────────────────────────
+
+  var lastHapticAt = 0;
+
+  function hapticsEnabled() {
+    try {
+      var b = bridge();
+      var v = b && typeof b.getStorage === 'function' ? b.getStorage('sd_haptics_enabled') : null;
+      if (v === '0' || v === '1') return v !== '0';
+      if (window.localStorage && typeof window.localStorage.getItem === 'function') {
+        var lv = window.localStorage.getItem('sd_haptics_enabled');
+        if (lv === '0' || lv === '1') return lv !== '0';
+      }
+      return true;
+    } catch (_) { return true; }
+  }
+
+  function haptic(type) {
+    if (!hapticsEnabled()) return false;
+    var now = Date.now();
+    if (now - lastHapticAt < 45) return false;
+    lastHapticAt = now;
+    try {
+      var b = bridge();
+      if (b && typeof b.performHaptic === 'function') {
+        b.performHaptic(String(type || 'tick'));
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  var netState = { online: true, pill: null };
+
+  function ensureNetPill() {
+    if (netState.pill && document.body && (!document.body.contains || document.body.contains(netState.pill))) {
+      return netState.pill;
+    }
+    if (!document.body || typeof document.createElement !== 'function') return null;
+    if (!document.getElementById('sd-net-pill-css')) {
+      var st = document.createElement('style');
+      st.id = 'sd-net-pill-css';
+      st.textContent =
+        '#sd-net-pill{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 78px);' +
+        'z-index:2147482995;display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:10px;' +
+        'background:var(--bds-bg-panel,#1e1f23);color:var(--bds-text-primary,#f1f1f3);' +
+        'border:1px solid var(--bds-border,rgba(255,255,255,.14));box-shadow:0 8px 24px rgba(0,0,0,.28);' +
+        'font:500 12.5px/1.25 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;pointer-events:none}' +
+        '#sd-net-pill[hidden]{display:none}' +
+        '#sd-net-pill i{width:7px;height:7px;border-radius:50%;background:#ef4444;flex:none}';
+      (document.head || document.documentElement).appendChild(st);
+    }
+    var p = document.createElement('div');
+    p.id = 'sd-net-pill';
+    p.setAttribute('role', 'status');
+    p.setAttribute('aria-live', 'polite');
+    p.hidden = true;
+    var dot = document.createElement('i');
+    dot.setAttribute('aria-hidden', 'true');
+    var label = document.createElement('span');
+    p.appendChild(dot);
+    p.appendChild(label);
+    document.body.appendChild(p);
+    netState.pill = p;
+    return p;
+  }
+
+  function setOnlineState(online) {
+    var next = !!online;
+    var changed = netState.online !== next;
+    netState.online = next;
+    var p = ensureNetPill();
+    if (p) {
+      var span = p.querySelector ? p.querySelector('span') : p.lastChild;
+      if (span) span.textContent = t('Offline — waiting for network…', 'অফলাইন — নেটওয়ার্কের অপেক্ষায়…');
+      p.hidden = next;
+      if (p.setAttribute) {
+        p.setAttribute('data-online', next ? '1' : '0');
+        p.setAttribute('data-show', next ? '0' : '1');
+      }
+    }
+    if (changed && !next) haptic('error');
+    else if (changed && next) haptic('tick');
+    return next;
+  }
+
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('offline', function () { setOnlineState(false); });
+    window.addEventListener('online', function () { setOnlineState(true); });
+    window.addEventListener('bds:connectivity', function (ev) {
+      var d = ev && ev.detail;
+      if (d && typeof d.online === 'boolean') setOnlineState(d.online);
+    });
+  }
+
+  window.__sdHaptic = haptic;
   window.__sdResolvePickedBlobs = resolvePickedBlobs;
   window.__sdAdaptUpload = adaptUpload;
   window.__sdBridgeFetch = bridgeFetch;
@@ -875,5 +971,7 @@
     _acceptsFile: acceptsFile,
     _isTextField: isTextField,
     _pool: pool,
+    _haptic: haptic,
+    _setOnlineState: setOnlineState,
   };
 })();

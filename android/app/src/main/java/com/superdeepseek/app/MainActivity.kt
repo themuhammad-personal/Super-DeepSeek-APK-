@@ -32,9 +32,19 @@ import android.widget.FrameLayout
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import java.io.File
+import android.content.Context
+import android.graphics.drawable.GradientDrawable
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.view.Gravity
+import android.webkit.WebResourceError
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebViewAssetLoader
@@ -48,6 +58,41 @@ internal fun applyRootWindowInsets(view: View, windowInsets: WindowInsetsCompat)
     view.setPadding(systemBars.left, systemBars.top, systemBars.right, bottomInset)
     view.translationY = 0f
     return WindowInsetsCompat.CONSUMED
+}
+
+/**
+ * Synchronizes root padding per display frame (60Hz/90Hz/120Hz) while the soft
+ * keyboard animates open or closed so the WebView composer and Studio terminal
+ * glide smoothly with the keyboard instead of snapping in a single jump.
+ */
+internal fun installSmoothImeInsetAnimation(view: View) {
+    ViewCompat.setWindowInsetsAnimationCallback(
+        view,
+        object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+            override fun onProgress(
+                insets: WindowInsetsCompat,
+                runningAnimations: MutableList<WindowInsetsAnimationCompat>,
+            ): WindowInsetsCompat {
+                val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+                view.setPadding(systemBars.left, systemBars.top, systemBars.right, maxOf(systemBars.bottom, ime.bottom))
+                view.translationY = 0f
+                return insets
+            }
+        },
+    )
+}
+
+/** True when a WebView error represents a genuine main-frame network failure rather than a subresource or cancelled load. */
+internal fun isMainFrameNetworkError(isForMainFrame: Boolean, errorCode: Int): Boolean {
+    if (!isForMainFrame) return false
+    return errorCode in setOf(
+        WebViewClient.ERROR_HOST_LOOKUP,
+        WebViewClient.ERROR_CONNECT,
+        WebViewClient.ERROR_TIMEOUT,
+        WebViewClient.ERROR_IO,
+        WebViewClient.ERROR_PROXY_AUTHENTICATION,
+    )
 }
 
 /**
@@ -579,6 +624,7 @@ class MainActivity : ComponentActivity() {
                 }
                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                     super.onPageStarted(view, url, favicon)
+                    mainFrameLoadFailed = false
                     // A navigation invalidates any asynchronous probe or asset-load result
                     // started for the previous document.
                     pageSurfaceWatchGeneration += 1
@@ -588,10 +634,21 @@ class MainActivity : ComponentActivity() {
                     // may be redirected to.
                     bridge.trustedPage = isTrustedBridgeUrl(url)
                 }
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                    super.onReceivedError(view, request, error)
+                    val targetUrl = request.url?.toString()
+                    if (isMainFrameNetworkError(request.isForMainFrame, error.errorCode) && isTrustedBridgeUrl(targetUrl)) {
+                        mainFrameLoadFailed = true
+                        failedMainFrameUrl = targetUrl
+                        dismissBootOverlay()
+                        showOfflineOverlay(true)
+                    }
+                }
                 override fun onPageFinished(view: WebView, url: String?) {
                     super.onPageFinished(view, url)
                     Log.d("SuperDeepSeek", "Official WebView loaded: $url")
                     if (isTrustedBridgeUrl(url)) {
+                        if (!mainFrameLoadFailed) showOfflineOverlay(false)
                         // Leave DeepSeek's sign-in and CAPTCHA surface untouched. The
                         // engine starts only once the real chat composer is visible.
                         startPageSurfaceWatch(view)
@@ -682,15 +739,11 @@ class MainActivity : ComponentActivity() {
             addView(officialWebView)
         }
 
-        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            val bottom = maxOf(systemBars.bottom, ime.bottom)
-            view.setPadding(systemBars.left, systemBars.top, systemBars.right, bottom)
-            WindowInsetsCompat.CONSUMED
-        }
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout, ::applyRootWindowInsets)
+        installSmoothImeInsetAnimation(rootLayout)
 
         setContentView(rootLayout)
+        registerNetworkMonitor()
 
         // Launch screen: takes over from the system splash and stays until the
         // enhanced page is really on screen (polish signal + readiness probe).
@@ -1342,12 +1395,144 @@ class MainActivity : ComponentActivity() {
         handleIncomingIntent(intent)
     }
 
+    private var mainFrameLoadFailed = false
+    private var failedMainFrameUrl: String? = null
+    private var offlineOverlay: View? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    private fun buildOfflineOverlay(): View {
+        val isDark = !isLightColor(pageBarColor)
+        val bg = if (isDark) Color.parseColor("#1e1f23") else Color.WHITE
+        val cardBg = if (isDark) Color.parseColor("#27292e") else Color.parseColor("#f4f5f7")
+        val fg = if (isDark) Color.parseColor("#ececee") else Color.parseColor("#1b1c1f")
+        val muted = if (isDark) Color.parseColor("#9ea2ab") else Color.parseColor("#5f636b")
+        val accent = Color.parseColor("#4d6bfe")
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        return FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setBackgroundColor(bg)
+            isClickable = true
+            isFocusable = true
+            val box = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                background = GradientDrawable().apply {
+                    cornerRadius = px(18).toFloat()
+                    setColor(cardBg)
+                }
+                setPadding(px(24), px(28), px(24), px(24))
+                layoutParams = FrameLayout.LayoutParams(px(320), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER)
+            }
+            box.addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.offline_title)
+                textSize = 17f
+                setTextColor(fg)
+                gravity = Gravity.CENTER
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            })
+            box.addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.offline_message)
+                textSize = 13.5f
+                setTextColor(muted)
+                gravity = Gravity.CENTER
+                setLineSpacing(0f, 1.3f)
+                setPadding(0, px(10), 0, px(20))
+            })
+            box.addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.offline_retry)
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                minHeight = px(42)
+                setPadding(px(22), px(10), px(22), px(10))
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                background = GradientDrawable().apply {
+                    cornerRadius = px(11).toFloat()
+                    setColor(accent)
+                }
+                setOnClickListener {
+                    if (::bridge.isInitialized) bridge.performHaptic("tick")
+                    retryMainFrameLoad()
+                }
+            })
+            addView(box)
+        }
+    }
+
+    private fun showOfflineOverlay(visible: Boolean) {
+        if (!::rootLayout.isInitialized) return
+        if (!visible) {
+            offlineOverlay?.let { rootLayout.removeView(it) }
+            offlineOverlay = null
+            return
+        }
+        if (offlineOverlay == null) {
+            offlineOverlay = buildOfflineOverlay().also { rootLayout.addView(it) }
+        }
+    }
+
+    private fun retryMainFrameLoad() {
+        if (!::officialWebView.isInitialized) return
+        mainFrameLoadFailed = false
+        showOfflineOverlay(false)
+        val target = failedMainFrameUrl?.takeIf { isTrustedBridgeUrl(it) }
+            ?: officialWebView.url?.takeIf { isTrustedBridgeUrl(it) }
+            ?: "https://chat.deepseek.com/"
+        officialWebView.loadUrl(target)
+    }
+
+    private fun notifyPageConnectivity(online: Boolean) {
+        if (!::officialWebView.isInitialized) return
+        officialWebView.post {
+            runCatching {
+                officialWebView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('bds:connectivity',{detail:{online:$online}}))",
+                    null,
+                )
+            }
+        }
+    }
+
+    private fun registerNetworkMonitor() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull()
+                if (caps != null && !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return
+                handler.post {
+                    notifyPageConnectivity(true)
+                    if (offlineOverlay != null && !isFinishing) retryMainFrameLoad()
+                }
+            }
+            override fun onLost(network: Network) {
+                val active = runCatching { cm.activeNetwork }.getOrNull()
+                if (active == null) {
+                    handler.post { notifyPageConnectivity(false) }
+                }
+            }
+        }
+        runCatching {
+            cm.registerDefaultNetworkCallback(cb)
+            networkCallback = cb
+        }
+    }
+
+    private fun unregisterNetworkMonitor() {
+        val cb = networkCallback ?: return
+        networkCallback = null
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        runCatching { cm.unregisterNetworkCallback(cb) }
+    }
+
     override fun onDestroy() {
         // A recreated activity may already have installed its own handler.
         if (SandboxService.onStopRequested === stopAgentInPage) SandboxService.onStopRequested = null
         if (StudioActivity.onAskAi === askAiInPage) StudioActivity.onAskAi = null
         // Closed for good: no page is left to run the agent loop.
-        if (isFinishing) SandboxService.onAgentActiveChanged(this, false)
+        if (isFinishing) SandboxService.onAgentStatusChanged(this, false, 0, "")
+        unregisterNetworkMonitor()
         handler.removeCallbacksAndMessages(null)
         closePopupWindow()
         try {

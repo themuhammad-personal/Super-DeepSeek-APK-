@@ -494,12 +494,160 @@
       } catch (_) {}
     }, 800);
   }
+  // ── Diff & Output Quick-Actions (pure + testable) ──────────────────────────
+
+  var WORKSPACE_FILE_RE = /(\/(?:root\/workspace|tmp)\/[A-Za-z0-9_./-]+\.(?:html?|md|svg|png|jpe?g|webp|gif|mp4|webm|mp3|wav|pdf|zip|csv|json))\b/g;
+  var WORKSPACE_FILE_TEST_RE = /^\/(?:root\/workspace|tmp)\/[A-Za-z0-9_./-]+\.(?:html?|md|svg|png|jpe?g|webp|gif|mp4|webm|mp3|wav|pdf|zip|csv|json)$/i;
+  var LOCAL_URL_RE = /\bhttps?:\/\/(?:127\.0\.0\.1|localhost):\d{2,5}(?:\/[^\s"'<>)]*)?/gi;
+
+  function isPreviewableExt(path) {
+    return /\.(?:html?|svg|png|jpe?g|webp|gif|mp4|webm|pdf)$/i.test(String(path || ''));
+  }
+
+  function splitDiffLines(text) {
+    var normText = String(text || '').replace(/\r\n/g, '\n').replace(/\n$/, '');
+    return normText === '' ? [] : normText.split('\n');
+  }
+
+  function computeUnifiedDiff(oldText, newText, maxLines) {
+    var a = splitDiffLines(oldText);
+    var b = splitDiffLines(newText);
+    var capN = maxLines || 160;
+    var m = a.length;
+    var n = b.length;
+    if (m + n > 600) {
+      // Fast linear fallback for very large files so UI never stalls.
+      var fast = [];
+      var addF = 0, delF = 0;
+      var lim = Math.max(m, n);
+      for (var k = 0; k < lim; k++) {
+        if (k < m && k < n && a[k] === b[k]) {
+          if (fast.length < capN) fast.push({ t: 'ctx', s: a[k] });
+        } else {
+          if (k < m) { delF++; if (fast.length < capN) fast.push({ t: 'del', s: a[k] }); }
+          if (k < n) { addF++; if (fast.length < capN) fast.push({ t: 'add', s: b[k] }); }
+        }
+      }
+      return { added: addF, removed: delF, lines: fast, truncated: (m + n) > capN };
+    }
+    var dp = new Array(m + 1);
+    for (var i = 0; i <= m; i++) {
+      dp[i] = typeof Int32Array === 'function' ? new Int32Array(n + 1) : new Array(n + 1).fill(0);
+    }
+    for (var i2 = m - 1; i2 >= 0; i2--) {
+      for (var j2 = n - 1; j2 >= 0; j2--) {
+        dp[i2][j2] = a[i2] === b[j2] ? dp[i2 + 1][j2 + 1] + 1 : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
+      }
+    }
+    var raw = [];
+    var ia = 0, ib = 0, added = 0, removed = 0;
+    while (ia < m && ib < n) {
+      if (a[ia] === b[ib]) {
+        raw.push({ t: 'ctx', s: a[ia] });
+        ia++; ib++;
+      } else if (dp[ia + 1][ib] >= dp[ia][ib + 1]) {
+        raw.push({ t: 'del', s: a[ia++] });
+        removed++;
+      } else {
+        raw.push({ t: 'add', s: b[ib++] });
+        added++;
+      }
+    }
+    while (ia < m) { raw.push({ t: 'del', s: a[ia++] }); removed++; }
+    while (ib < n) { raw.push({ t: 'add', s: b[ib++] }); added++; }
+
+    // Keep 2 lines of context around changed hunks.
+    var keep = new Uint8Array(raw.length);
+    for (var r = 0; r < raw.length; r++) {
+      if (raw[r].t !== 'ctx') {
+        for (var c = Math.max(0, r - 2); c <= Math.min(raw.length - 1, r + 2); c++) keep[c] = 1;
+      }
+    }
+    var out = [];
+    var skipped = false;
+    for (var q = 0; q < raw.length; q++) {
+      if (!keep[q]) { skipped = true; continue; }
+      if (skipped && out.length) { out.push({ t: 'gap', s: '⋯' }); skipped = false; }
+      else skipped = false;
+      out.push(raw[q]);
+      if (out.length >= capN) break;
+    }
+    return { added: added, removed: removed, lines: out, truncated: out.length >= capN && q < raw.length - 1 };
+  }
+
+  function stepDiffStats(tool, args) {
+    if (!args || typeof args !== 'object') return null;
+    var p = String(args.path || '');
+    if (p.indexOf('/tmp/sd-out/') === 0) return null;
+    if (tool === 'edit_file' && (typeof args.old_text === 'string' || typeof args.new_text === 'string')) {
+      var d = computeUnifiedDiff(args.old_text || '', args.new_text || '', 120);
+      return d.added || d.removed ? { kind: 'edit', path: p, added: d.added, removed: d.removed, lines: d.lines, truncated: d.truncated } : null;
+    }
+    if (tool === 'write_file' && typeof args.content === 'string') {
+      var arr = splitDiffLines(args.content);
+      if (!arr.length) return null;
+      var preview = arr.slice(0, 80).map(function (ln) { return { t: 'add', s: ln }; });
+      return { kind: 'write', path: p, added: arr.length, removed: 0, lines: preview, truncated: arr.length > 80 };
+    }
+    return null;
+  }
+
+  function detectStepOutputs(step) {
+    if (!step || step.ok === false || step.stopped) return [];
+    var found = [];
+    var seen = {};
+    function addFile(p) {
+      var clean = String(p || '').trim();
+      if (!clean || clean.indexOf('/tmp/sd-out/') === 0 || seen['f:' + clean]) return;
+      if (!WORKSPACE_FILE_TEST_RE.test(clean)) return;
+      seen['f:' + clean] = 1;
+      var name = clean.split('/').pop() || clean;
+      found.push({ kind: 'file', path: clean, name: name, previewable: isPreviewableExt(clean) });
+    }
+    function addUrl(u) {
+      var clean = String(u || '').trim().replace(/[.,;:]+$/, '');
+      if (!clean || seen['u:' + clean]) return;
+      seen['u:' + clean] = 1;
+      found.push({ kind: 'url', url: clean, name: clean.replace(/^https?:\/\//i, '') });
+    }
+    var args = step.args;
+    if (!args && step.input) { try { args = JSON.parse(step.input); } catch (_) { args = null; } }
+    if (args && typeof args === 'object') {
+      if ((step.tool === 'write_file' || step.tool === 'edit_file' || step.tool === 'preview') && args.path) addFile(args.path);
+      if (step.tool === 'preview' && args.url) addUrl(args.url);
+    }
+    var scanBlob = [step.call || '', step.output || '', args && args.command ? String(args.command) : ''].join('\n');
+    var m;
+    WORKSPACE_FILE_RE.lastIndex = 0;
+    while ((m = WORKSPACE_FILE_RE.exec(scanBlob))) addFile(m[1]);
+    LOCAL_URL_RE.lastIndex = 0;
+    while ((m = LOCAL_URL_RE.exec(scanBlob))) addUrl(m[0]);
+    return found;
+  }
+
+  function collectRunOutputs(steps) {
+    var all = [];
+    var seen = {};
+    (steps || []).forEach(function (s) {
+      detectStepOutputs(s).forEach(function (o) {
+        var key = o.kind === 'url' ? 'u:' + o.url : 'f:' + o.path;
+        if (seen[key]) return;
+        seen[key] = 1;
+        all.push(o);
+      });
+    });
+    return all;
+  }
+
   function remember(run) {
     if (!run || !run.key || /\|live$/.test(run.key)) return;
     store[run.key] = {
       u: Date.now(), t0: run.t0, t1: run.t1,
       steps: run.steps.slice(-MAX_LIVE_STEPS).map(function (s) {
-        return { tool: s.tool, server: s.server, call: s.call, ok: s.ok, ms: s.t1 ? s.t1 - s.t0 : null, saved: s.saved || null, stopped: !!s.stopped };
+        var entry = { tool: s.tool, server: s.server, call: s.call, ok: s.ok, ms: s.t1 ? s.t1 - s.t0 : null, saved: s.saved || null, stopped: !!s.stopped };
+        if (s.diff) entry.diff = { path: s.diff.path, added: s.diff.added, removed: s.diff.removed };
+        if (s.outs && s.outs.length) entry.outs = s.outs.slice(0, 4);
+        return entry;
       }),
     };
     saveSoon();
@@ -741,7 +889,9 @@
       if (live.steps.length >= MAX_LIVE_STEPS) return;
       var a = '';
       try { a = JSON.stringify(d.args || {}, null, 2); } catch (_) { a = ''; }
+      var diff = stepDiffStats(String(d.tool || ''), d.args);
       var s = { id: d.id, tool: String(d.tool || ''), server: String(d.server || ''), call: String(d.call || ''),
+        args: d.args || null, diff: diff, outs: [],
         input: cap(a, MAX_IN), t0: d.at || Date.now(), t1: 0, ok: null, output: '', saved: null, stopped: false };
       live.steps.push(s);
       live.byId[d.id] = s;
@@ -753,6 +903,7 @@
       st.stopped = !!d.stopped;
       st.output = cap(d.output, MAX_OUT);
       st.saved = d.saved || null;
+      st.outs = detectStepOutputs(st);
       live.t1 = st.t1;
     } else return;
     remember(live);
@@ -797,6 +948,63 @@
     return 'run';
   }
 
+  function diffBadgeHtml(diff) {
+    if (!diff || (!diff.added && !diff.removed)) return '';
+    return '<span class="sd-run-ds">' +
+      (diff.added ? '<ins>+' + num(diff.added) + '</ins>' : '') +
+      (diff.removed ? '<del>-' + num(diff.removed) + '</del>' : '') +
+      '</span>';
+  }
+
+  function aggregateDiff(steps) {
+    var added = 0, removed = 0;
+    (steps || []).forEach(function (s) {
+      var d = s.diff || stepDiffStats(s.tool, s.args);
+      if (d) { added += d.added || 0; removed += d.removed || 0; }
+    });
+    return added || removed ? { added: added, removed: removed } : null;
+  }
+
+  function outputsFromSteps(steps) {
+    var outs = [];
+    var seen = {};
+    (steps || []).forEach(function (s) {
+      var list = Array.isArray(s.outs) && s.outs.length ? s.outs : detectStepOutputs(s);
+      list.forEach(function (o) {
+        var k = o.kind === 'url' ? 'u:' + o.url : 'f:' + o.path;
+        if (seen[k]) return;
+        seen[k] = 1;
+        outs.push(o);
+      });
+    });
+    return outs;
+  }
+
+  function outputsBarHtml(outs, hasSandbox) {
+    if (!outs || !outs.length) return '';
+    var btns = [];
+    outs.slice(0, 3).forEach(function (o) {
+      if (o.kind === 'url') {
+        btns.push('<button type="button" class="sd-run-act" data-act="preview-url" data-url="' + esc(o.url) + '">' +
+          esc(t('Preview ', 'প্রিভিউ ') + o.name) + '</button>');
+      } else if (o.previewable) {
+        btns.push('<button type="button" class="sd-run-act" data-act="preview-file" data-path="' + esc(o.path) + '">' +
+          esc(t('Preview ', 'প্রিভিউ ') + o.name) + '</button>');
+        btns.push('<button type="button" class="sd-run-act sd-run-act-sec" data-act="export-file" data-path="' + esc(o.path) + '">' +
+          esc(t('Save ', 'সেভ ') + o.name) + '</button>');
+      } else {
+        btns.push('<button type="button" class="sd-run-act sd-run-act-sec" data-act="export-file" data-path="' + esc(o.path) + '">' +
+          esc(t('Save ', 'সেভ ') + o.name) + '</button>');
+      }
+    });
+    btns = btns.slice(0, 3);
+    if (hasSandbox) {
+      btns.push('<button type="button" class="sd-run-act sd-run-act-sec" data-act="studio">' +
+        esc(t('Linux Studio', 'লিনাক্স স্টুডিও')) + '</button>');
+    }
+    return '<div class="sd-run-acts">' + btns.join('') + '</div>';
+  }
+
   function cardHtml(info) {
     var st = info.running ? 'running' : info.stopped ? 'stopped' : 'done';
     var steps = info.count === 1 ? t('1 step', '১টি ধাপ') : t(info.count + ' steps', num(info.count) + 'টি ধাপ');
@@ -804,7 +1012,7 @@
     var meta = [steps];
     if (info.running) {
       title = t('Working', 'কাজ চলছে');
-      if (info.t0) meta.push(fmtDur(Date.now() - info.t0));
+      if (info.t0) meta.push(fmtDur(Math.max(0, Date.now() - info.t0)));
     } else if (info.stopped) {
       title = t('Stopped', 'থামানো হয়েছে');
     } else if (info.t0 && info.t1 > info.t0) {
@@ -813,27 +1021,71 @@
       title = t('Worked', 'কাজ সম্পন্ন');
     }
     if (info.failed) meta.push(t(info.failed + ' failed', num(info.failed) + 'টি ব্যর্থ'));
+    var totalDiff = aggregateDiff(info.steps);
     var h = '<div class="sd-run-head"><span class="sd-run-ic" data-s="' + st + '"></span>' +
       '<span class="sd-run-title">' + esc(title) + '</span>' +
       '<span class="sd-run-meta">' + esc(meta.join(' · ')) + '</span>' +
+      diffBadgeHtml(totalDiff) +
       (info.running ? '<button type="button" class="sd-run-stop"><i></i>' + esc(t('Stop', 'থামান')) + '</button>' : '') +
       '<span class="sd-run-chev" aria-hidden="true"></span></div>';
     if (info.running) {
       var cur = null;
       for (var i = info.steps.length - 1; i >= 0; i--) if (!info.steps[i].t1 && info.steps[i].ok == null) { cur = info.steps[i]; break; }
+      var curElapsed = cur && cur.t0 >= 1e11 ? fmtDur(Math.max(0, Date.now() - cur.t0)) : '';
       h += '<div class="sd-run-now">' + (cur
-        ? '<b>' + esc(cur.tool) + '</b><span>' + esc(cur.call || serverLabel(cur.server)) + '</span>'
+        ? '<b>' + esc(cur.tool) + '</b><span>' + esc(cur.call || serverLabel(cur.server)) + '</span>' +
+          diffBadgeHtml(cur.diff) + (curElapsed ? '<em>' + esc(curElapsed) + '</em>' : '')
         : '<span>' + esc(t('Thinking about the next step…', 'পরের ধাপ ভাবছে…')) + '</span>') + '</div>';
       var done = info.steps.filter(function (s) { return s !== cur; }).slice(-SHOW_LAST);
       if (done.length) {
         h += '<ul class="sd-run-last">' + done.map(function (s) {
           var ms = stepMs(s);
           return '<li><span class="sd-run-si" data-s="' + stepIcon(s) + '"></span><b>' + esc(s.tool) + '</b><span>' +
-            esc(s.call || '') + '</span>' + (ms != null ? '<em>' + esc(fmtDur(ms)) + '</em>' : '') + '</li>';
+            esc(s.call || '') + '</span>' + diffBadgeHtml(s.diff) + (ms != null ? '<em>' + esc(fmtDur(ms)) + '</em>' : '') + '</li>';
         }).join('') + '</ul>';
       }
+    } else {
+      var outs = outputsFromSteps(info.steps);
+      var hasSbx = (info.steps || []).some(function (s) { return isSandbox(s.server); });
+      h += outputsBarHtml(outs, hasSbx);
     }
     return { state: st, html: h };
+  }
+
+  function runQuickAction(btn) {
+    if (!btn || !btn.getAttribute) return false;
+    var act = btn.getAttribute('data-act');
+    if (!act) return false;
+    try { if (typeof window.__sdHaptic === 'function') window.__sdHaptic('tick'); } catch (_) {}
+    var bf = window.__sdBridgeFetch;
+    var toastFn = function (msg) {
+      try { if (window.__sdEngine && typeof window.__sdEngine.toast === 'function') window.__sdEngine.toast(msg); } catch (_) {}
+    };
+    if (act === 'studio') {
+      try { if (window.AndroidBridge && typeof window.AndroidBridge.openStudio === 'function') window.AndroidBridge.openStudio(); } catch (_) {}
+      return true;
+    }
+    if (act === 'preview-file' && typeof bf === 'function') {
+      bf({ type: 'bds-mcp-call', serverUrl: 'sandbox://linux', apiKey: '', toolName: 'preview', args: { path: btn.getAttribute('data-path') || '' } });
+      return true;
+    }
+    if (act === 'preview-url' && typeof bf === 'function') {
+      bf({ type: 'bds-mcp-call', serverUrl: 'sandbox://linux', apiKey: '', toolName: 'preview', args: { url: btn.getAttribute('data-url') || '' } });
+      return true;
+    }
+    if (act === 'export-file' && typeof bf === 'function') {
+      var p = btn.getAttribute('data-path') || '';
+      Promise.resolve(bf({ type: 'bds-mcp-call', serverUrl: 'sandbox://linux', apiKey: '', toolName: 'export_file', args: { path: p } }))
+        .then(function (r) {
+          if (r && r.ok && !(r.result && r.result.isError)) {
+            toastFn(t('Saved to Downloads: ', 'ডাউনলোডে সেভ হয়েছে: ') + (p.split('/').pop() || p));
+          } else {
+            toastFn(t('Could not save file.', 'ফাইল সেভ করা যায়নি।'));
+          }
+        });
+      return true;
+    }
+    return false;
   }
 
   var cards = new Set();
@@ -852,11 +1104,17 @@
       card.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onCardClick.call(card, ev); } });
       host.appendChild(card);
     }
+    var prevState = card.getAttribute('data-state');
     var c = cardHtml(info);
     if (card.__sdHtml !== c.html) { card.innerHTML = c.html; card.__sdHtml = c.html; }
     card.setAttribute('data-state', c.state);
     card.setAttribute('aria-label', norm(card.textContent));
     card.__sdInfo = info;
+    if (prevState === 'running' && c.state === 'done') {
+      try {
+        if (typeof window.__sdHaptic === 'function') window.__sdHaptic(info.failed ? 'error' : 'success');
+      } catch (_) {}
+    }
     cards.add(card);
     observeCard(card);
     return card;
@@ -865,13 +1123,23 @@
   function onCardClick(ev) {
     var info = this.__sdInfo;
     if (!info) return;
-    if (ev && ev.target && ev.target.closest && ev.target.closest('.sd-run-stop')) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      try { if (window.__sdAgent) window.__sdAgent.stop(); } catch (_) {}
-      scheduleScan(true);
-      return;
+    if (ev && ev.target && ev.target.closest) {
+      var actBtn = ev.target.closest('.sd-run-act');
+      if (actBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        runQuickAction(actBtn);
+        return;
+      }
+      if (ev.target.closest('.sd-run-stop')) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        try { if (window.__sdAgent) window.__sdAgent.stop(); } catch (_) {}
+        scheduleScan(true);
+        return;
+      }
     }
+    try { if (typeof window.__sdHaptic === 'function') window.__sdHaptic('tick'); } catch (_) {}
     openDrawer(info);
   }
 
@@ -1001,6 +1269,13 @@
       '<div class="sd-run-pb"></div>';
     wrap.appendChild(panel);
     wrap.addEventListener('click', function (ev) {
+      var actBtn = ev.target && ev.target.closest && ev.target.closest('.sd-run-act');
+      if (actBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        runQuickAction(actBtn);
+        return;
+      }
       if (ev.target === wrap || (ev.target.closest && ev.target.closest('.sd-run-close'))) closeDrawer();
     });
     document.body.appendChild(wrap);
@@ -1064,22 +1339,47 @@
         tn.calls.forEach(function (c) {
           var s = take(c.tool) || {};
           var res = c.result;
-          items.push({ step: {
-            tool: c.tool || s.tool, server: c.server || s.server, call: callSummary(c.tool, c.args) || s.call || '',
+          var toolName = c.tool || s.tool;
+          var diff = stepDiffStats(toolName, c.args) || s.diff || null;
+          var outStr = s.output || (res ? cap(res.content, MAX_OUT) : '');
+          var okVal = res ? !res.error : s.ok != null ? s.ok : null;
+          var stepObj = {
+            tool: toolName, server: c.server || s.server, call: callSummary(c.tool, c.args) || s.call || '',
+            args: c.args || s.args || null, diff: diff,
             input: cap(JSON.stringify(c.args || {}, null, 2), MAX_IN),
-            output: s.output || (res ? cap(res.content, MAX_OUT) : ''),
-            ok: res ? !res.error : s.ok != null ? s.ok : null,
+            output: outStr,
+            ok: okVal,
             stopped: !!s.stopped, saved: s.saved || null, ms: stepMs(s),
-          } });
+          };
+          stepObj.outs = detectStepOutputs(stepObj);
+          items.push({ step: stepObj });
         });
       }
     }
     for (; k < timed.length; k++) {
       var s2 = timed[k];
-      items.push({ step: { tool: s2.tool, server: s2.server, call: s2.call, input: s2.input || '', output: s2.output || '',
-        ok: s2.ok, stopped: !!s2.stopped, saved: s2.saved || null, ms: stepMs(s2) } });
+      var stepObj2 = {
+        tool: s2.tool, server: s2.server, call: s2.call, args: s2.args || null,
+        diff: s2.diff || stepDiffStats(s2.tool, s2.args),
+        input: s2.input || '', output: s2.output || '',
+        ok: s2.ok, stopped: !!s2.stopped, saved: s2.saved || null, ms: stepMs(s2)
+      };
+      stepObj2.outs = Array.isArray(s2.outs) && s2.outs.length ? s2.outs : detectStepOutputs(stepObj2);
+      items.push({ step: stepObj2 });
     }
     return items;
+  }
+
+  function renderDiffHtml(diff) {
+    if (!diff || !Array.isArray(diff.lines) || !diff.lines.length) return '';
+    var rows = diff.lines.map(function (ln) {
+      if (ln.t === 'gap') return '<div class="sd-dl sd-dl-gap">⋯</div>';
+      var sym = ln.t === 'add' ? '+' : ln.t === 'del' ? '-' : ' ';
+      return '<div class="sd-dl sd-dl-' + ln.t + '"><i>' + sym + '</i><span>' + esc(ln.s) + '</span></div>';
+    }).join('');
+    if (diff.truncated) rows += '<div class="sd-dl sd-dl-gap">' + esc(t('… diff truncated …', '… বাকি পরিবর্তন সংক্ষিপ্ত …')) + '</div>';
+    return '<div class="sd-run-lb">' + esc(t('Changes', 'পরিবর্তন')) + (diff.path ? ' · <code>' + esc(diff.path) + '</code>' : '') + '</div>' +
+      '<div class="sd-run-diff">' + rows + '</div>';
   }
 
   function renderDrawer() {
@@ -1087,11 +1387,12 @@
     var info = drawer.info;
     var items = timeline(info, drawer.hist);
     var steps = items.filter(function (x) { return x.step; });
+    var stepModels = steps.map(function (x) { return x.step; });
     var n = Math.max(steps.length, info.count);
     var servers = {};
     steps.forEach(function (x) { servers[serverLabel(x.step.server)] = 1; });
     var sub = [n === 1 ? t('1 step', '১টি ধাপ') : t(n + ' steps', num(n) + 'টি ধাপ')];
-    if (info.t0 && (info.t1 > info.t0 || info.running)) sub.push(fmtDur((info.running ? Date.now() : info.t1) - info.t0));
+    if (info.t0 && (info.t1 > info.t0 || info.running)) sub.push(fmtDur(Math.max(0, (info.running ? Date.now() : info.t1) - info.t0)));
     var sv = Object.keys(servers);
     if (sv.length) sub.push(sv.join(', '));
     var fails = steps.filter(function (x) { return x.step.ok === false && !x.step.stopped; }).length;
@@ -1105,19 +1406,25 @@
     var old = drawer.body.querySelectorAll('details[open]');
     for (var i = 0; i < old.length; i++) open[old[i].getAttribute('data-i')] = 1;
     var si = 0;
-    var html = items.map(function (x) {
+    var outs = collectRunOutputs(stepModels);
+    var hasSbx = stepModels.some(function (s) { return isSandbox(s.server); });
+    var topActs = outputsBarHtml(outs, hasSbx);
+    var html = (topActs ? '<div class="sd-run-drawer-acts">' + topActs + '</div>' : '') + items.map(function (x) {
       if (x.note) return '<p class="sd-run-note">' + esc(x.note) + '</p>';
       var s = x.step;
       var idx = si++;
       var ic = s.stopped ? 'stop' : s.ok === true ? 'ok' : s.ok === false ? 'err' : 'run';
       var ms = s.ms != null ? fmtDur(s.ms) : '';
+      var stepActs = s.outs && s.outs.length ? outputsBarHtml(s.outs, false) : '';
       return '<details class="sd-run-step" data-i="' + idx + '"' + (open[idx] ? ' open' : '') + '><summary>' +
         '<span class="sd-run-si" data-s="' + ic + '"></span><b>' + esc(s.tool) + '</b><span class="sd-run-call">' + esc(s.call) + '</span>' +
-        (ms ? '<em>' + esc(ms) + '</em>' : '') + '</summary><div class="sd-run-sd">' +
+        diffBadgeHtml(s.diff) + (ms ? '<em>' + esc(ms) + '</em>' : '') + '</summary><div class="sd-run-sd">' +
         '<div class="sd-run-kv">' + esc(t('Where', 'কোথায়')) + ': <span>' + esc(serverLabel(s.server)) + '</span></div>' +
-        '<div class="sd-run-lb">' + esc(t('Input', 'ইনপুট')) + '</div><pre>' + esc(s.input || s.call || '—') + '</pre>' +
+        renderDiffHtml(s.diff) +
+        (s.diff && s.diff.lines && s.diff.lines.length ? '' : '<div class="sd-run-lb">' + esc(t('Input', 'ইনপুট')) + '</div><pre>' + esc(s.input || s.call || '—') + '</pre>') +
         '<div class="sd-run-lb">' + esc(s.ok === false ? t('Error', 'ত্রুটি') : t('Output', 'আউটপুট')) + '</div><pre>' +
         esc(s.output || (s.ok == null && !s.stopped ? t('Running…', 'চলছে…') : s.stopped ? t('Stopped by you.', 'আপনি থামিয়েছেন।') : '—')) + '</pre>' +
+        stepActs +
         (s.saved ? '<div class="sd-run-kv">' + esc(t('Full output saved at', 'পূর্ণ আউটপুট সেভ আছে')) + ': <code>' + esc(s.saved) + '</code></div>' : '') +
         '</div></details>';
     }).join('');
@@ -1156,11 +1463,28 @@
     '.sd-run-now{display:flex;gap:8px;align-items:baseline;margin:8px 0 0;padding:7px 9px;border-radius:9px;background:var(--bds-bg-elevated,rgba(127,127,127,.08));',
     'font:12.5px/1.35 ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;min-width:0}',
     '.sd-run-now b,.sd-run-last b,.sd-run-step summary b{flex:none;font-weight:600}',
-    '.sd-run-now span:not(.sd-run-si),.sd-run-last li span:not(.sd-run-si),.sd-run-call{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--bds-text-secondary,#8e8ea0)}',
+    '.sd-run-now > span:not(.sd-run-si):not(.sd-run-ds),.sd-run-last li > span:not(.sd-run-si):not(.sd-run-ds),.sd-run-call{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--bds-text-secondary,#8e8ea0)}',
+    '.sd-run-now > span:not(.sd-run-si):not(.sd-run-ds){flex:1}',
     '.sd-run-last{list-style:none;margin:6px 0 0;padding:0}',
     '.sd-run-last li{display:flex;align-items:center;gap:8px;padding:3px 2px;font:12.5px/1.35 ui-monospace,Menlo,Consolas,monospace;min-width:0}',
-    '.sd-run-last li span:not(.sd-run-si){flex:1}',
-    '.sd-run-last em,.sd-run-step summary em{flex:none;font-style:normal;color:var(--bds-text-tertiary,#8e8ea0);font-size:11.5px}',
+    '.sd-run-last li > span:not(.sd-run-si):not(.sd-run-ds){flex:1}',
+    '.sd-run-now em,.sd-run-last em,.sd-run-step summary em{flex:none;font-style:normal;color:var(--bds-text-tertiary,#8e8ea0);font-size:11.5px;font-variant-numeric:tabular-nums}',
+    '.sd-run-meta{font-variant-numeric:tabular-nums}',
+    '.sd-run-ds{flex:none;display:inline-flex;align-items:center;gap:4px;font:600 11.5px/1 ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}',
+    '.sd-run-ds ins{text-decoration:none;color:#16a34a}.sd-run-ds del{text-decoration:none;color:#ef4444}',
+    '.sd-run-acts{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}',
+    '.sd-run-drawer-acts .sd-run-acts{margin:2px 4px 8px}',
+    '.sd-run-act{flex:none;border:1px solid var(--bds-border,rgba(127,127,127,.26));border-radius:8px;padding:5px 10px;',
+    'background:var(--bds-accent,#4d6bfe);color:#fff;font:600 12px/1.2 system-ui,-apple-system,sans-serif;cursor:pointer;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}',
+    '.sd-run-act.sd-run-act-sec{background:var(--bds-bg-elevated,rgba(127,127,127,.1));color:var(--bds-text-primary,inherit)}',
+    '.sd-run-act:active{opacity:.82}',
+    '.sd-run-diff{border-radius:8px;overflow:auto;max-height:38vh;border:1px solid var(--bds-border,rgba(127,127,127,.2));background:var(--bds-bg-panel,#18191d);color:var(--bds-text-primary,inherit);font:12px/1.45 ui-monospace,Menlo,Consolas,monospace}',
+    '.sd-dl{display:flex;gap:8px;padding:1px 8px;white-space:pre-wrap;word-break:break-word;color:var(--bds-text-primary,inherit)}',
+    '.sd-dl i{flex:none;width:10px;font-style:normal;user-select:none;opacity:.75}',
+    '.sd-dl span{flex:1;min-width:0;user-select:text}',
+    '.sd-dl-add{background:rgba(34,197,94,.14);color:var(--bds-text-primary,inherit)}.sd-dl-add i{color:#16a34a;opacity:1}',
+    '.sd-dl-del{background:rgba(239,68,68,.14);color:var(--bds-text-primary,inherit)}.sd-dl-del i{color:#ef4444;opacity:1}',
+    '.sd-dl-gap{justify-content:center;color:var(--bds-text-tertiary,#8e8ea0);font-size:11px;padding:3px 8px;background:rgba(127,127,127,.06)}',
     '#sd-run-sheet{position:fixed;inset:0;z-index:2147482999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.45);animation:sd-run-fade .2s ease}',
     '#sd-run-sheet .sd-run-panel{width:100%;max-width:680px;max-height:86vh;display:flex;flex-direction:column;box-sizing:border-box;',
     'border-radius:18px 18px 0 0;background:var(--bds-bg-panel,#1e1f23);color:var(--bds-text-primary,#ececec);',
@@ -1169,7 +1493,7 @@
     '#sd-run-sheet .sd-run-panel::before{content:"";display:block;flex:none;width:40px;height:4px;border-radius:999px;background:var(--bds-border-hover,rgba(127,127,127,.4));margin:8px auto 2px}',
     '.sd-run-ph{display:flex;align-items:flex-start;gap:12px;padding:8px 16px 10px;border-bottom:1px solid var(--bds-border,rgba(127,127,127,.2))}',
     '.sd-run-pt{flex:1;min-width:0}.sd-run-pt h3{margin:0;font-size:16px;font-weight:600}',
-    '.sd-run-pt p{margin:2px 0 0;color:var(--bds-text-secondary,#8e8ea0);font-size:13px}',
+    '.sd-run-pt p{margin:2px 0 0;color:var(--bds-text-secondary,#8e8ea0);font-size:13px;font-variant-numeric:tabular-nums}',
     '.sd-run-close{flex:none;position:relative;width:32px;height:32px;border:0;border-radius:50%;background:var(--bds-bg-hover,rgba(127,127,127,.14));cursor:pointer}',
     '.sd-run-close::before,.sd-run-close::after{content:"";position:absolute;left:9px;top:15px;width:14px;height:2px;border-radius:1px;background:var(--bds-text-primary,#ececec);transform:rotate(45deg)}',
     '.sd-run-close::after{transform:rotate(-45deg)}',
@@ -1249,6 +1573,10 @@
     _cardHtml: cardHtml,
     _syncHref: syncHref,
     _live: function () { return live; },
+    _computeUnifiedDiff: computeUnifiedDiff,
+    _stepDiffStats: stepDiffStats,
+    _detectStepOutputs: detectStepOutputs,
+    _collectRunOutputs: collectRunOutputs,
   };
 
   if (document.body) start();

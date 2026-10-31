@@ -1,10 +1,13 @@
 package com.superdeepseek.app
 
+import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,6 +25,7 @@ class KeyboardInsetTest {
     fun setUp() {
         rootLayout = FrameLayout(RuntimeEnvironment.getApplication())
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout, ::applyRootWindowInsets)
+        installSmoothImeInsetAnimation(rootLayout)
     }
 
     @Test
@@ -96,5 +100,14 @@ class KeyboardInsetTest {
         assertEquals(56, rootLayout.paddingTop)
         assertEquals(24, rootLayout.paddingRight)
         assertEquals(56, rootLayout.paddingBottom)
+    }
+
+    @Test
+    fun `isMainFrameNetworkError triggers only for main-frame transport failures`() {
+        assertTrue(isMainFrameNetworkError(true, WebViewClient.ERROR_HOST_LOOKUP))
+        assertTrue(isMainFrameNetworkError(true, WebViewClient.ERROR_CONNECT))
+        assertTrue(isMainFrameNetworkError(true, WebViewClient.ERROR_TIMEOUT))
+        assertFalse(isMainFrameNetworkError(false, WebViewClient.ERROR_HOST_LOOKUP))
+        assertFalse(isMainFrameNetworkError(true, WebViewClient.ERROR_BAD_URL))
     }
 }

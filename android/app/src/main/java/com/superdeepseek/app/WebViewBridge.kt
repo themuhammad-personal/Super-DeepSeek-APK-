@@ -953,11 +953,20 @@ class WebViewBridge(
         }
     }
 
+    @Volatile private var lastHapticAt = 0L
+
+    internal fun isHapticsEnabled(): Boolean =
+            prefs.getString(KEY_HAPTICS_ENABLED, "1") != "0"
+
     /**
      * Perform native physical haptic vibration for crisp Android touch interaction.
      */
     @JavascriptInterface
     fun performHaptic(type: String?) {
+        if (!isHapticsEnabled()) return
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastHapticAt < 45L) return
+        lastHapticAt = now
         try {
             val vibrator =
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -1011,6 +1020,10 @@ class WebViewBridge(
      */
     @JavascriptInterface
     fun vibrate(millis: Long) {
+        if (!isHapticsEnabled()) return
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastHapticAt < 45L) return
+        lastHapticAt = now
         val ms = millis.coerceIn(1, 60)
         try {
             val vibrator =
@@ -1345,7 +1358,7 @@ class WebViewBridge(
     /** Stop button: ends every sandbox command and background job. */
     @JavascriptInterface
     fun sandboxStop(): Int = if (!trustedPage) 0 else try {
-        SandboxService.onAgentActiveChanged(context, false)
+        SandboxService.onAgentStatusChanged(context, false, 0, "")
         sandbox.killAll()
     } catch (t: Throwable) { 0 }
 
@@ -1354,6 +1367,13 @@ class WebViewBridge(
     fun sandboxAgentActive(active: Boolean) {
         if (!trustedPage) return
         runCatching { SandboxService.onAgentActiveChanged(context, active) }
+    }
+
+    /** Live step counter & current tool summary for the Sandbox foreground notification. */
+    @JavascriptInterface
+    fun sandboxAgentStatus(active: Boolean, step: Int, label: String?) {
+        if (!trustedPage) return
+        runCatching { SandboxService.onAgentStatusChanged(context, active, step, label) }
     }
 
     private fun handleSandboxListTools(response: JSONObject) {
@@ -1408,6 +1428,7 @@ class WebViewBridge(
                 "bds-mcp-call" -> handleMcpCallTool(payload, response)
                 "bds-mcp-read-resource" -> handleMcpReadResource(payload, response)
                 "bds-get-youtube-transcript" -> handleYoutubeTranscript(payload, response)
+                "bds-inspect-media" -> handleInspectMedia(payload, response)
                 else -> {
                     response.put("ok", false)
                     response.put("error", "Unsupported bridge message type: $type")
@@ -1418,6 +1439,20 @@ class WebViewBridge(
             response.put("error", "Bridge error: ${t.message ?: t.javaClass.simpleName}")
         }
         return response.toString()
+    }
+
+    private fun handleInspectMedia(payload: JSONObject, response: JSONObject) {
+        val result = NativeMediaInspector.inspect(
+            context = context,
+            payload = payload,
+            blobs = blobs,
+            sandbox = if (isSandboxEnabled() && sandbox.isSupported()) sandbox else null,
+        )
+        val keys = result.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            response.put(k, result.get(k))
+        }
     }
 
     /** Client for visual/artifact fetches: SSRF-safe DNS, no cookie jar, no cache, short timeouts. */
@@ -2338,6 +2373,8 @@ class WebViewBridge(
         internal const val KEY_SANDBOX_MODE = "sd_sandbox_mode"
         /** "0": no automatic "continue" when a reply stops mid-task (sd-agent.js). */
         internal const val KEY_AGENT_CONTINUE = "sd_agent_autocontinue"
+        /** "0" disables subtle native haptic ticks/feedback (default "1" = enabled). */
+        internal const val KEY_HAPTICS_ENABLED = "sd_haptics_enabled"
         /** The chat's UI language ("bn", "en", …), written by sd-agent.js; Studio follows it. */
         internal const val KEY_UI_LOCALE = "sd_ui_locale"
         private const val DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com"

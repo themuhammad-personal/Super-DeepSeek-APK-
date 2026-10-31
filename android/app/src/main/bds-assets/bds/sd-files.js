@@ -407,6 +407,486 @@
       });
     });
   }
+  // ── Device-Side PDF, Audio/Video Media Metadata & Image/OCR Inspection ────
+
+  function asciiSlice(b, off, len) {
+    var end = Math.min(b.length, off + len), s = '';
+    for (var i = Math.max(0, off); i < end; i++) s += String.fromCharCode(b[i]);
+    return s;
+  }
+  function u16be(b, o) { return ((b[o] << 8) | b[o + 1]) >>> 0; }
+  function u32be(b, o) { return (((b[o] << 24) >>> 0) + ((b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3])) >>> 0; }
+  function u64be(b, o) { return u32be(b, o) * 4294967296 + u32be(b, o + 4); }
+  function fmtDurationMs(ms) {
+    if (!ms || ms <= 0) return '';
+    var sec = Math.round(ms / 1000);
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    return h > 0 ? h + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s);
+  }
+
+  function inflateZlib(data, max, isCancelled) {
+    if (typeof DecompressionStream !== 'function') return Promise.resolve(null);
+    function runMode(mode, slice) {
+      return new Promise(function (resolve, reject) {
+        try {
+          var reader = new Blob([slice]).stream().pipeThrough(new DecompressionStream(mode)).getReader();
+          var chunks = [], total = 0;
+          function pump() {
+            if (isCancelled && isCancelled()) { try { reader.cancel(); } catch (_) {} return reject(new Error('cancelled')); }
+            return reader.read().then(function (r) {
+              if (r.done) {
+                var out = new Uint8Array(total), o = 0;
+                chunks.forEach(function (c) { out.set(c, o); o += c.length; });
+                resolve(out);
+                return;
+              }
+              total += r.value.length;
+              if (total > max) { try { reader.cancel(); } catch (_) {} resolve(null); return; }
+              chunks.push(r.value);
+              return pump();
+            }, reject);
+          }
+          pump();
+        } catch (err) { reject(err); }
+      });
+    }
+    return runMode('deflate', data).catch(function () {
+      var trimmed = data.length > 6 ? data.subarray(2, data.length - 4) : data;
+      return runMode('deflate-raw', trimmed).catch(function () { return null; });
+    });
+  }
+
+  function decodePdfLiteral(s) {
+    var out = '';
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charAt(i);
+      if (c !== '\\') { out += c; continue; }
+      var nx = s.charAt(++i);
+      if (!nx) break;
+      if (nx === 'n') out += '\n';
+      else if (nx === 'r') out += '\r';
+      else if (nx === 't') out += '\t';
+      else if (nx === 'b') out += '\b';
+      else if (nx === 'f') out += '\f';
+      else if (nx >= '0' && nx <= '7') {
+        var oct = nx;
+        if (s[i + 1] >= '0' && s[i + 1] <= '7') oct += s[++i];
+        if (s[i + 1] >= '0' && s[i + 1] <= '7') oct += s[++i];
+        out += String.fromCharCode(parseInt(oct, 8));
+      } else if (nx === '\n' || nx === '\r') {
+        if (nx === '\r' && s[i + 1] === '\n') i++;
+      } else {
+        out += nx;
+      }
+    }
+    if (out.length >= 2 && out.charCodeAt(0) === 0xfe && out.charCodeAt(1) === 0xff) {
+      var u = '';
+      for (var j = 2; j + 1 < out.length; j += 2) u += String.fromCharCode((out.charCodeAt(j) << 8) | out.charCodeAt(j + 1));
+      return u;
+    }
+    return out;
+  }
+
+  function decodePdfHex(hex) {
+    var clean = hex.replace(/\s+/g, '');
+    if (clean.length % 2 === 1) clean += '0';
+    var bytes = new Uint8Array(clean.length / 2);
+    for (var i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16) || 0;
+    if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+      try { return new TextDecoder('utf-16be').decode(bytes.subarray(2)); } catch (_) {}
+    }
+    return asciiSlice(bytes, 0, bytes.length);
+  }
+
+  function parsePdfTextOperators(streamStr) {
+    var chunks = [];
+    var btRe = /\bBT\b([\s\S]*?)\bET\b/g, m;
+    while ((m = btRe.exec(streamStr))) {
+      var block = m[1], lines = [], cur = '';
+      var tokRe = /\((?:\\[\s\S]|[^\\)])*\)\s*(?:Tj|')|<([0-9A-Fa-f\s]+)>\s*Tj|\[([\s\S]*?)\]\s*TJ|\b(T\*|TD|Td)\b/g, tm;
+      while ((tm = tokRe.exec(block))) {
+        if (tm[3]) {
+          if (cur.trim()) { lines.push(cur.trim()); cur = ''; }
+        } else if (tm[1] != null) {
+          cur += decodePdfHex(tm[1]);
+        } else if (tm[2] != null) {
+          var arr = tm[2], subRe = /\((?:\\[\s\S]|[^\\)])*\)|<([0-9A-Fa-f\s]+)>|(-?\d+(?:\.\d+)?)/g, sm;
+          while ((sm = subRe.exec(arr))) {
+            if (sm[1] != null) cur += decodePdfHex(sm[1]);
+            else if (sm[2] != null) { if (parseFloat(sm[2]) < -120) cur += ' '; }
+            else cur += decodePdfLiteral(sm[0].slice(1, -1));
+          }
+        } else {
+          var parenEnd = tm[0].lastIndexOf(')');
+          if (parenEnd > 0) cur += decodePdfLiteral(tm[0].slice(1, parenEnd));
+        }
+      }
+      if (cur.trim()) lines.push(cur.trim());
+      if (lines.length) chunks.push(lines.join('\n'));
+    }
+    return chunks.join('\n');
+  }
+
+  function extractPdf(bytes, name, isCancelled) {
+    if (bytes.length < 8 || asciiSlice(bytes, 0, 5) !== '%PDF-') return Promise.resolve(null);
+    var raw = asciiSlice(bytes, 0, Math.min(bytes.length, 4 * 1024 * 1024));
+    var ver = (/^%PDF-(\d+\.\d+)/.exec(raw) || [])[1] || '1.x';
+    var counts = [], cm;
+    var countRe = /\/Type\s*\/Pages\b[\s\S]{0,240}?\/Count\s+(\d+)|\/Count\s+(\d+)[\s\S]{0,240}?\/Type\s*\/Pages\b/g;
+    while ((cm = countRe.exec(raw))) counts.push(parseInt(cm[1] || cm[2], 10));
+    var leafPages = (raw.match(/\/Type\s*\/Page\b(?![sS])/g) || []).length;
+    var pageCount = counts.length ? Math.max.apply(null, counts) : leafPages;
+    var titleM = /\/Title\s*\(((?:\\.|[^\\)]){1,240})\)/.exec(raw);
+    var authorM = /\/Author\s*\(((?:\\.|[^\\)]){1,240})\)/.exec(raw);
+    var encrypted = /\/Encrypt\b/.test(raw);
+
+    var streams = [];
+    var sRe = /<<([\s\S]{0,600}?)>>\s*stream(?:\r\n|\n|\r)/g, sm;
+    while ((sm = sRe.exec(raw)) && streams.length < 180) {
+      var dict = sm[1];
+      var dataStart = sm.index + sm[0].length;
+      var endIdx = raw.indexOf('endstream', dataStart);
+      if (endIdx < 0) break;
+      var dataEnd = endIdx;
+      if (raw[dataEnd - 1] === '\n') dataEnd--;
+      if (raw[dataEnd - 1] === '\r') dataEnd--;
+      streams.push({ flate: /\/FlateDecode\b/.test(dict), start: dataStart, end: dataEnd });
+      sRe.lastIndex = endIdx + 9;
+    }
+
+    var texts = [];
+    return streams.reduce(function (p, st) {
+      return p.then(function () {
+        checkCancelled(isCancelled);
+        var slice = bytes.subarray(st.start, st.end);
+        if (!st.flate) {
+          var plain = parsePdfTextOperators(asciiSlice(slice, 0, slice.length));
+          if (plain) texts.push(plain);
+          return;
+        }
+        return inflateZlib(slice, 2 * 1024 * 1024, isCancelled).then(function (unz) {
+          if (!unz) return;
+          var parsed = parsePdfTextOperators(asciiSlice(unz, 0, unz.length));
+          if (parsed) texts.push(parsed);
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      var body = tidy(texts.join('\n\n'));
+      var header = [
+        '# PDF Document: ' + (name || 'document.pdf'),
+        '',
+        '- PDF version: ' + ver,
+        pageCount > 0 ? '- Pages: ' + pageCount : null,
+        titleM ? '- Title: ' + decodePdfLiteral(titleM[1]).trim() : null,
+        authorM ? '- Author: ' + decodePdfLiteral(authorM[1]).trim() : null,
+        encrypted ? '- Security: Encrypted PDF' : null,
+        '',
+      ].filter(Boolean).join('\n');
+      if (body) return { text: header + '\n## Extracted Text\n\n' + body, kind: 'PDF document', meta: { pdfVersion: ver, pageCount: pageCount } };
+      return { text: header + '\n[Scanned or image-based PDF — no embedded text layer found on device.]', kind: 'PDF document', meta: { pdfVersion: ver, pageCount: pageCount } };
+    });
+  }
+
+  function extractMediaMetadata(bytes, name, mime) {
+    if (!bytes || bytes.length < 12) return null;
+    var info = { sizeBytes: bytes.length, fileName: name || 'media' };
+    // WAV (RIFF....WAVE)
+    if (bytes.length >= 44 && asciiSlice(bytes, 0, 4) === 'RIFF' && asciiSlice(bytes, 8, 4) === 'WAVE') {
+      var pos = 12, ch = 0, sr = 0, br = 0, bps = 0, dsz = 0;
+      while (pos + 8 <= bytes.length) {
+        var cid = asciiSlice(bytes, pos, 4), csz = u32(bytes, pos + 4), body = pos + 8;
+        if (cid === 'fmt ' && csz >= 16 && body + 16 <= bytes.length) {
+          ch = u16(bytes, body + 2); sr = u32(bytes, body + 4); br = u32(bytes, body + 8); bps = u16(bytes, body + 14);
+        } else if (cid === 'data') { dsz = csz; break; }
+        pos = body + csz + (csz & 1);
+      }
+      if (ch > 0 && sr > 0) {
+        info.kind = 'audio';
+        info.container = 'WAV (PCM)';
+        info.channels = ch;
+        info.sampleRate = sr;
+        if (bps > 0) info.bitsPerSample = bps;
+        var effBr = br > 0 ? br : sr * ch * Math.max(1, bps >> 3);
+        if (effBr > 0 && dsz > 0) info.durationMs = Math.round((dsz / effBr) * 1000);
+        return info;
+      }
+    }
+    // MP4 / MOV / M4A (....ftyp)
+    if (bytes.length >= 16 && asciiSlice(bytes, 4, 4) === 'ftyp') {
+      var brand = asciiSlice(bytes, 8, 4).trim();
+      info.container = 'ISO BMFF (' + (brand || 'mp4') + ')';
+      info.kind = /^M4A/i.test(brand) || /^audio\//i.test(mime || '') || /\.(m4a|aac)$/i.test(name || '') ? 'audio' : 'video';
+      (function scanBoxes(start, end, depth) {
+        if (depth > 6) return;
+        var p = start, lim = Math.min(end, bytes.length);
+        while (p + 8 <= lim) {
+          var sz = u32be(bytes, p), tp = asciiSlice(bytes, p + 4, 4), hlen = 8;
+          if (sz === 1) { if (p + 16 > lim) break; hlen = 16; sz = u64be(bytes, p + 8); }
+          else if (sz === 0) sz = lim - p;
+          if (sz < hlen || p + sz > lim) break;
+          var bd = p + hlen, bend = p + sz;
+          if (tp === 'moov' || tp === 'trak' || tp === 'mdia') scanBoxes(bd, bend, depth + 1);
+          else if (tp === 'mvhd' && bd + 20 <= bend) {
+            var v = bytes[bd];
+            var scale = v === 1 && bd + 32 <= bend ? u32be(bytes, bd + 20) : u32be(bytes, bd + 12);
+            var dur = v === 1 && bd + 32 <= bend ? u64be(bytes, bd + 24) : u32be(bytes, bd + 16);
+            if (scale > 0 && dur > 0) info.durationMs = Math.round((dur / scale) * 1000);
+          } else if (tp === 'tkhd') {
+            var tv = bytes[bd], wOff = tv === 1 ? bd + 88 : bd + 76;
+            if (wOff + 8 <= bend) {
+              var w = u32be(bytes, wOff) >>> 16, h = u32be(bytes, wOff + 4) >>> 16;
+              if (w > (info.width || 0) && h > (info.height || 0)) { info.width = w; info.height = h; info.kind = 'video'; }
+            }
+          }
+          p = bend;
+        }
+      })(0, bytes.length, 0);
+      return info;
+    }
+    // FLAC (fLaC + STREAMINFO)
+    if (bytes.length >= 42 && asciiSlice(bytes, 0, 4) === 'fLaC') {
+      info.kind = 'audio';
+      info.container = 'FLAC';
+      var srFlac = (bytes[18] << 12) | (bytes[19] << 4) | (bytes[20] >> 4);
+      var chFlac = ((bytes[20] >> 1) & 0x07) + 1;
+      var bpsFlac = (((bytes[20] & 0x01) << 4) | (bytes[21] >> 4)) + 1;
+      var hiSamples = bytes[21] & 0x0f;
+      var totalSamples = hiSamples * 4294967296 + u32be(bytes, 22);
+      if (srFlac > 0) info.sampleRate = srFlac;
+      if (chFlac > 0) info.channels = chFlac;
+      if (bpsFlac > 0) info.bitsPerSample = bpsFlac;
+      if (srFlac > 0 && totalSamples > 0) info.durationMs = Math.round((totalSamples / srFlac) * 1000);
+      return info;
+    }
+    // OGG (OggS)
+    if (bytes.length >= 48 && asciiSlice(bytes, 0, 4) === 'OggS') {
+      info.kind = /\.(ogv)$/i.test(name || '') || /^video\//i.test(mime || '') ? 'video' : 'audio';
+      var segs = bytes[26], bodyOff = 27 + segs;
+      if (bodyOff + 16 <= bytes.length && asciiSlice(bytes, bodyOff, 8) === 'OpusHead') {
+        info.container = 'OGG Opus';
+        info.channels = bytes[bodyOff + 9];
+        info.sampleRate = u32(bytes, bodyOff + 12) || 48000;
+      } else if (bodyOff + 16 <= bytes.length && asciiSlice(bytes, bodyOff + 1, 6) === 'vorbis') {
+        info.container = 'OGG Vorbis';
+        info.channels = bytes[bodyOff + 11];
+        info.sampleRate = u32(bytes, bodyOff + 12);
+      } else {
+        info.container = 'OGG';
+      }
+      return info;
+    }
+    // WebM / Matroska EBML (0x1A 0x45 0xDF 0xA3)
+    if (bytes.length >= 32 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+      var headAscii = asciiSlice(bytes, 0, Math.min(bytes.length, 128));
+      info.container = headAscii.indexOf('webm') >= 0 ? 'WebM' : 'Matroska (MKV)';
+      info.kind = /^audio\//i.test(mime || '') ? 'audio' : 'video';
+      return info;
+    }
+    // AVI (RIFF....AVI )
+    if (bytes.length >= 56 && asciiSlice(bytes, 0, 4) === 'RIFF' && asciiSlice(bytes, 8, 4) === 'AVI ') {
+      info.kind = 'video';
+      info.container = 'AVI';
+      if (asciiSlice(bytes, 24, 4) === 'avih' && bytes.length >= 72) {
+        var usPerFrame = u32(bytes, 32), totalFrames = u32(bytes, 48), aw = u32(bytes, 64), ah = u32(bytes, 68);
+        if (aw > 0 && ah > 0) { info.width = aw; info.height = ah; }
+        if (usPerFrame > 0 && totalFrames > 0) info.durationMs = Math.round((usPerFrame * totalFrames) / 1000);
+      }
+      return info;
+    }
+    // MP3 (ID3v2 tag or MPEG sync word)
+    var mp3Off = 0;
+    if (asciiSlice(bytes, 0, 3) === 'ID3' && bytes.length >= 10) {
+      var id3Size = ((bytes[6] & 0x7f) << 21) | ((bytes[7] & 0x7f) << 14) | ((bytes[8] & 0x7f) << 7) | (bytes[9] & 0x7f);
+      mp3Off = 10 + id3Size;
+      // Extract ID3v2.3/2.4 TIT2 (Title) and TPE1 (Artist) if ASCII/UTF-8
+      var p3 = 10, lim3 = Math.min(bytes.length, mp3Off);
+      while (p3 + 10 < lim3) {
+        var fid = asciiSlice(bytes, p3, 4);
+        if (!/^[A-Z0-9]{4}$/.test(fid)) break;
+        var fsz = bytes[4] === 4
+          ? (((bytes[p3 + 4] & 0x7f) << 21) | ((bytes[p3 + 5] & 0x7f) << 14) | ((bytes[p3 + 6] & 0x7f) << 7) | (bytes[p3 + 7] & 0x7f))
+          : u32be(bytes, p3 + 4);
+        if (fsz <= 1 || p3 + 10 + fsz > lim3) break;
+        if (fid === 'TIT2' || fid === 'TPE1' || fid === 'TALB') {
+          var enc = bytes[p3 + 10], rawTxt = bytes.subarray(p3 + 11, p3 + 10 + fsz);
+          var txt = '';
+          try { txt = new TextDecoder(enc === 1 ? 'utf-16' : enc === 2 ? 'utf-16be' : 'utf-8').decode(rawTxt).replace(/\0+/g, '').trim(); } catch (_) {}
+          if (txt) {
+            if (fid === 'TIT2') info.title = txt;
+            else if (fid === 'TPE1') info.artist = txt;
+            else if (fid === 'TALB') info.album = txt;
+          }
+        }
+        p3 += 10 + fsz;
+      }
+    }
+    if (mp3Off + 4 <= bytes.length && bytes[mp3Off] === 0xff && (bytes[mp3Off + 1] & 0xe0) === 0xe0) {
+      var b1 = bytes[mp3Off + 1], b2 = bytes[mp3Off + 2], b3 = bytes[mp3Off + 3];
+      var verBits = (b1 >> 3) & 0x03, layerBits = (b1 >> 1) & 0x03;
+      var brIdx = (b2 >> 4) & 0x0f, srIdx = (b2 >> 2) & 0x03, chMode = (b3 >> 6) & 0x03;
+      if (verBits !== 1 && layerBits === 1 && brIdx > 0 && brIdx < 15 && srIdx < 3) {
+        var brTable = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+        var srTable = verBits === 3 ? [44100, 48000, 32000] : verBits === 2 ? [22050, 24000, 16000] : [11025, 12000, 8000];
+        var kbps = brTable[brIdx], srate = srTable[srIdx];
+        info.kind = 'audio';
+        info.container = 'MP3';
+        info.sampleRate = srate;
+        info.channels = chMode === 3 ? 1 : 2;
+        info.bitrateBps = kbps * 1000;
+        if (kbps > 0 && bytes.length > mp3Off) info.durationMs = Math.round(((bytes.length - mp3Off) * 8) / kbps);
+        return info;
+      }
+    }
+    if (mp3Off > 10 && (info.title || info.artist)) {
+      info.kind = 'audio';
+      info.container = 'MP3 (ID3)';
+      return info;
+    }
+    return null;
+  }
+
+  function extractImageInfo(bytes) {
+    if (!bytes || bytes.length < 10) return null;
+    if (bytes.length >= 24 && bytes[0] === 0x89 && asciiSlice(bytes, 1, 3) === 'PNG' && asciiSlice(bytes, 12, 4) === 'IHDR') {
+      return { format: 'PNG', width: u32be(bytes, 16), height: u32be(bytes, 20) };
+    }
+    if (bytes.length >= 10 && (asciiSlice(bytes, 0, 6) === 'GIF87a' || asciiSlice(bytes, 0, 6) === 'GIF89a')) {
+      return { format: 'GIF', width: u16(bytes, 6), height: u16(bytes, 8) };
+    }
+    if (bytes.length >= 30 && asciiSlice(bytes, 0, 4) === 'RIFF' && asciiSlice(bytes, 8, 4) === 'WEBP') {
+      var ck = asciiSlice(bytes, 12, 4);
+      if (ck === 'VP8X') {
+        return {
+          format: 'WEBP',
+          width: 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16)),
+          height: 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16)),
+        };
+      }
+      if (ck === 'VP8 ') return { format: 'WEBP', width: u16(bytes, 26) & 0x3fff, height: u16(bytes, 28) & 0x3fff };
+    }
+    if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+      var p = 2, info = { format: 'JPEG', width: 0, height: 0 };
+      while (p + 4 < bytes.length) {
+        if (bytes[p] !== 0xff) { p++; continue; }
+        var mk = bytes[p + 1];
+        while (mk === 0xff && p + 2 < bytes.length) { p++; mk = bytes[p + 1]; }
+        if (mk === 0xd9 || mk === 0xda) break;
+        var sl = u16be(bytes, p + 2);
+        if (sl < 2 || p + 2 + sl > bytes.length) break;
+        if (mk === 0xe1 && sl > 14 && asciiSlice(bytes, p + 4, 6) === 'Exif\0\0') {
+          var tiff = p + 10, le = asciiSlice(bytes, tiff, 2) === 'II';
+          var r16 = function (o) { return le ? u16(bytes, o) : u16be(bytes, o); };
+          var r32 = function (o) { return le ? u32(bytes, o) : u32be(bytes, o); };
+          var ifd0 = tiff + r32(tiff + 4);
+          if (ifd0 + 2 <= p + 2 + sl) {
+            var entries = r16(ifd0);
+            for (var ei = 0; ei < entries && ifd0 + 2 + (ei + 1) * 12 <= p + 2 + sl; ei++) {
+              var eoff = ifd0 + 2 + ei * 12, tag = r16(eoff), cnt = r32(eoff + 4);
+              if (tag === 0x0112) info.orientation = r16(eoff + 8);
+              else if ((tag === 0x010f || tag === 0x0110) && cnt > 1 && cnt < 80) {
+                var soff = cnt <= 4 ? eoff + 8 : tiff + r32(eoff + 8);
+                if (soff + cnt <= p + 2 + sl) {
+                  var sval = asciiSlice(bytes, soff, cnt).replace(/\0+/g, '').trim();
+                  if (sval) { if (tag === 0x010f) info.cameraMake = sval; else info.cameraModel = sval; }
+                }
+              }
+            }
+          }
+        } else if ((mk >= 0xc0 && mk <= 0xc3) && p + 9 <= bytes.length) {
+          info.height = u16be(bytes, p + 5);
+          info.width = u16be(bytes, p + 7);
+        }
+        p += 2 + sl;
+      }
+      if (info.width > 0 && info.height > 0) return info;
+    }
+    return null;
+  }
+
+  function bytesToBase64(bytes) {
+    if (typeof btoa === 'function') {
+      var chunk = 0x8000, parts = [];
+      for (var i = 0; i < bytes.length; i += chunk) {
+        parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + chunk)));
+      }
+      return btoa(parts.join(''));
+    }
+    var abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/', out = '';
+    for (var j = 0; j < bytes.length; j += 3) {
+      var b0 = bytes[j], b1 = j + 1 < bytes.length ? bytes[j + 1] : 0, b2 = j + 2 < bytes.length ? bytes[j + 2] : 0;
+      var tri = (b0 << 16) | (b1 << 8) | b2;
+      out += abc[(tri >> 18) & 63] + abc[(tri >> 12) & 63] +
+        (j + 1 < bytes.length ? abc[(tri >> 6) & 63] : '=') +
+        (j + 2 < bytes.length ? abc[tri & 63] : '=');
+    }
+    return out;
+  }
+
+  function formatMediaSummary(name, meta, ocrText) {
+    var lines = ['# Media File: ' + name, ''];
+    if (meta.kind) lines.push('- Media type: ' + meta.kind);
+    if (meta.container || meta.format) lines.push('- Format: ' + (meta.container || meta.format));
+    if (meta.detectedMime) lines.push('- MIME: ' + meta.detectedMime);
+    if (meta.sizeBytes != null) lines.push('- Size: ' + fmtSize(meta.sizeBytes));
+    var dur = fmtDurationMs(meta.durationMs);
+    if (dur) lines.push('- Duration: ' + dur + ' (' + Math.round(meta.durationMs / 1000) + 's)');
+    if (meta.width > 0 && meta.height > 0) lines.push('- Resolution: ' + meta.width + ' × ' + meta.height + ' px');
+    if (meta.frameRate > 0) lines.push('- Frame rate: ' + Number(meta.frameRate).toFixed(2).replace(/\.00$/, '') + ' fps');
+    if (meta.sampleRate > 0) lines.push('- Sample rate: ' + meta.sampleRate + ' Hz');
+    if (meta.channels > 0) lines.push('- Channels: ' + (meta.channels === 1 ? 'Mono (1)' : meta.channels === 2 ? 'Stereo (2)' : meta.channels));
+    if (meta.bitsPerSample > 0) lines.push('- Bit depth: ' + meta.bitsPerSample + '-bit');
+    if (meta.bitrateBps > 0) lines.push('- Bitrate: ' + Math.round(meta.bitrateBps / 1000) + ' kbps');
+    if (meta.title) lines.push('- Title: ' + meta.title);
+    if (meta.artist) lines.push('- Artist: ' + meta.artist);
+    if (meta.album) lines.push('- Album: ' + meta.album);
+    if (meta.cameraMake || meta.cameraModel) lines.push('- Camera: ' + [meta.cameraMake, meta.cameraModel].filter(Boolean).join(' '));
+    if (meta.orientation) lines.push('- EXIF orientation: ' + meta.orientation);
+    lines.push('');
+    if (ocrText) {
+      lines.push('## Extracted OCR Text');
+      lines.push('');
+      lines.push(ocrText.trim());
+    } else if (meta.kind === 'audio' || meta.kind === 'video') {
+      lines.push('_[Inspected on device. Audio/video stream metadata was extracted locally so the AI can reason about its container, duration, resolution, and tags.]_');
+    }
+    return lines.join('\n');
+  }
+
+  function inspectMedia(file, preReadBytes, isCancelled) {
+    var pBytes = preReadBytes ? Promise.resolve(preReadBytes) : readBytes(file, isCancelled).then(function (rb) { return rb.b; });
+    return pBytes.then(function (b) {
+      checkCancelled(isCancelled);
+      var localAv = extractMediaMetadata(b, file.name, file.type);
+      var localImg = !localAv ? extractImageInfo(b) : null;
+      var bf = window.__sdBridgeFetch;
+      var canBridge = typeof bf === 'function' && b.length > 0 && b.length <= 16 * 1024 * 1024;
+      if (!canBridge) {
+        var m0 = localAv || (localImg ? Object.assign({ kind: 'image', sizeBytes: file.size || b.length }, localImg) : null);
+        return m0 ? { ok: true, meta: m0, ocrText: '', summary: formatMediaSummary(file.name, m0, '') } : { ok: false };
+      }
+      var payload = {
+        type: 'bds-inspect-media',
+        name: file.name || 'file',
+        mime: file.type || '',
+        blobPath: file.__sdBlobPath || '',
+        base64: file.__sdBlobPath ? '' : bytesToBase64(b),
+      };
+      return Promise.resolve().then(function () { return bf(payload); }).then(function (res) {
+        var nativeMeta = res && res.ok && res.meta && typeof res.meta === 'object' ? res.meta : null;
+        var ocr = res && res.ok && typeof res.ocrText === 'string' ? res.ocrText.trim() : '';
+        var merged = Object.assign({}, localImg || {}, localAv || {}, nativeMeta || {});
+        if (!merged.sizeBytes) merged.sizeBytes = file.size || b.length;
+        var valid = !!(localAv || localImg || nativeMeta);
+        if (!valid) return { ok: false };
+        return { ok: true, meta: merged, ocrText: ocr, summary: formatMediaSummary(file.name, merged, ocr) };
+      }, function () {
+        var m1 = localAv || (localImg ? Object.assign({ kind: 'image', sizeBytes: file.size || b.length }, localImg) : null);
+        return m1 ? { ok: true, meta: m1, ocrText: '', summary: formatMediaSummary(file.name, m1, '') } : { ok: false };
+      });
+    });
+  }
+
   function extractBytes(file, b, isCancelled) {
     return Promise.resolve().then(function () {
       checkCancelled(isCancelled);
@@ -415,6 +895,24 @@
         var w = '';
         try { w = new TextDecoder(wide).decode(b.subarray(2)); } catch (_) {}
         if (w) return { text: w, kind: 'text' };
+      }
+      if (ext === '.pdf' || (b.length >= 8 && asciiSlice(b, 0, 5) === '%PDF-')) {
+        return extractPdf(b, file.name, isCancelled).then(function (pdfRes) {
+          if (pdfRes) return pdfRes;
+          return binarySummary(b, file, isCancelled).then(function (text) { return { text: text, kind: 'binary' }; });
+        });
+      }
+      if (isAV(file)) {
+        return inspectMedia(file, b, isCancelled).then(function (mr) {
+          if (mr && mr.ok) return { text: mr.summary, kind: 'media metadata' };
+          return { text: '', kind: 'unsupported-av' };
+        });
+      }
+      if (IMAGE_EXT.test(file.name || '') || /^image\//i.test(file.type || '')) {
+        return inspectMedia(file, b, isCancelled).then(function (mr) {
+          if (mr && mr.ok) return { text: mr.summary, kind: mr.ocrText ? 'image (OCR)' : 'image metadata' };
+          return binarySummary(b, file, isCancelled).then(function (text) { return { text: text, kind: 'binary' }; });
+        });
       }
       if (isZip(b)) {
         var en = zipEntries(b), has = function (n) { return en.some(function (e) { return e.name === n; }); };
@@ -464,8 +962,24 @@
         if (stopped()) { cancelled = true; return; }
         report(f, 'reading');
         function finish() { completed++; report(f, 'ready'); }
-        if (isAV(f)) { notes.push(t(f.name + ': audio and video are not supported', f.name + ': অডিও ও ভিডিও সমর্থিত নয়')); finish(); return; }
         if (f.size > MAX_INPUT) { notes.push(t(f.name + ': larger than 100 MB', f.name + ': ১০০ MB-এর বেশি')); finish(); return; }
+        if (isAV(f)) {
+          return inspectMedia(f, null, stopped).then(function (mr) {
+            if (stopped()) { cancelled = true; return; }
+            if (!mr || !mr.ok || !mr.summary) {
+              notes.push(t(f.name + ': audio and video are not supported', f.name + ': অডিও ও ভিডিও সমর্থিত নয়'));
+              finish();
+              return;
+            }
+            var avParts = partsOf(f.name, mr.summary, 'media metadata');
+            avParts.forEach(function (x) { out.push(x); });
+            notes.push(t(f.name + ' → media metadata extracted on device', f.name + ' → ডিভাইসে মিডিয়া মেটাডেটা পড়া হয়েছে'));
+            finish();
+          }, function () {
+            notes.push(t(f.name + ': audio and video are not supported', f.name + ': অডিও ও ভিডিও সমর্থিত নয়'));
+            finish();
+          });
+        }
         if (accepts(accept, f)) { out.push(f); finish(); return; }
         return extract(f, stopped).then(function (r) {
           if (stopped()) { cancelled = true; return; }
@@ -592,5 +1106,20 @@
   }
   document.addEventListener('change', onChange, true);
 
-  window.__sdFiles = { version: 1, extract: extract, convertAll: convertAll, partsOf: partsOf, _zipEntries: zipEntries, _zipReadMany: zipReadMany, _rtf: rtf, _looksText: looksText, _isAV: isAV, _acceptOf: acceptOf };
+  window.__sdFiles = {
+    version: 1,
+    extract: extract,
+    convertAll: convertAll,
+    partsOf: partsOf,
+    inspectMedia: inspectMedia,
+    _zipEntries: zipEntries,
+    _zipReadMany: zipReadMany,
+    _rtf: rtf,
+    _looksText: looksText,
+    _isAV: isAV,
+    _acceptOf: acceptOf,
+    _extractPdf: extractPdf,
+    _extractMediaMetadata: extractMediaMetadata,
+    _extractImageInfo: extractImageInfo,
+  };
 })();

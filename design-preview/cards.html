@@ -5,16 +5,52 @@
 <style>
  body{margin:0;font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
  .cols{display:flex;gap:0;align-items:stretch}
+ @media(max-width:720px){.cols{flex-direction:column}}
  .col{flex:1;min-width:0;padding:20px 16px;box-sizing:border-box}
  .col.dark{background:#212327;color:#ececee}
- .col.light{background:#fff;color:#1b1c1f}
+ .col.light{background:#fff;color:#1b1c1f;--bds-bg-panel:#f8f9fb;--bds-bg-elevated:#eef0f4;--bds-bg-hover:rgba(0,0,0,.05);--bds-bg-input:rgba(0,0,0,.04);--bds-border:rgba(0,0,0,.11);--bds-text-primary:#1b1c1f;--bds-text-secondary:#5c606a;--bds-text-tertiary:#7b808c;--bds-accent:#4d6bfe}
  .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.5;margin:18px 0 6px}
  .sheet{border:1px solid var(--bds-border);border-radius:20px;background:var(--bds-bg-panel);overflow:hidden}
+ .sd-run-card{margin:10px 0 8px;padding:10px 12px;border-radius:14px;border:1px solid var(--bds-border,rgba(127,127,127,.25));background:var(--bds-bg-panel,transparent);color:var(--bds-text-primary,inherit);font:14px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:100%;box-sizing:border-box}
+ .sd-run-head{display:flex;align-items:center;gap:8px;min-height:24px}
+ .sd-run-title{font-weight:600;white-space:nowrap}
+ .sd-run-meta{color:var(--bds-text-secondary,#8e8ea0);font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-variant-numeric:tabular-nums}
+ .sd-run-chev{flex:none;width:7px;height:7px;border:solid var(--bds-text-secondary,#8e8ea0);border-width:0 2px 2px 0;transform:rotate(-45deg);margin:0 4px 0 2px}
+ .sd-run-ic,.sd-run-si{flex:none;position:relative;width:14px;height:14px;border-radius:50%;box-sizing:border-box}
+ .sd-run-ic[data-s="running"],.sd-run-si[data-s="run"]{border:2px solid var(--bds-border,rgba(127,127,127,.3));border-top-color:var(--bds-accent,#5b7bff)}
+ .sd-run-ic[data-s="done"],.sd-run-si[data-s="ok"]{background:#22c55e}
+ .sd-run-ic[data-s="done"]::after,.sd-run-si[data-s="ok"]::after{content:"";position:absolute;left:4.5px;top:2px;width:3px;height:6px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+ .sd-run-stop{flex:none;display:flex;align-items:center;gap:6px;border:0;border-radius:999px;padding:6px 11px;background:var(--bds-bg-hover,rgba(127,127,127,.14));color:var(--bds-text-primary,inherit);font:600 12px/1 system-ui,sans-serif}
+ .sd-run-stop i{width:8px;height:8px;border-radius:2px;background:#ef4444;display:block}
+ .sd-run-now{display:flex;gap:8px;align-items:baseline;margin:8px 0 0;padding:7px 9px;border-radius:9px;background:var(--bds-bg-elevated,rgba(127,127,127,.08));font:12.5px/1.35 ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;min-width:0}
+ .sd-run-now b,.sd-run-last b,.sd-run-step summary b{flex:none;font-weight:600}
+ .sd-run-now > span:not(.sd-run-si):not(.sd-run-ds),.sd-run-last li > span:not(.sd-run-si):not(.sd-run-ds),.sd-run-call{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--bds-text-secondary,#8e8ea0);flex:1}
+ .sd-run-last{list-style:none;margin:6px 0 0;padding:0}
+ .sd-run-last li{display:flex;align-items:center;gap:8px;padding:3px 2px;font:12.5px/1.35 ui-monospace,Menlo,Consolas,monospace;min-width:0}
+ .sd-run-now em,.sd-run-last em,.sd-run-step summary em{flex:none;font-style:normal;color:var(--bds-text-tertiary,#8e8ea0);font-size:11.5px;font-variant-numeric:tabular-nums}
+ .sd-run-ds{flex:none;display:inline-flex;align-items:center;gap:4px;font:600 11.5px/1 ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+ .sd-run-ds ins{text-decoration:none;color:#16a34a}.sd-run-ds del{text-decoration:none;color:#ef4444}
+ .sd-run-acts{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}
+ .sd-run-act{flex:none;border:1px solid var(--bds-border,rgba(127,127,127,.26));border-radius:8px;padding:5px 10px;background:var(--bds-accent,#4d6bfe);color:#fff;font:600 12px/1.2 system-ui,-apple-system,sans-serif;white-space:nowrap}
+ .sd-run-act.sd-run-act-sec{background:var(--bds-bg-elevated,rgba(127,127,127,.1));color:var(--bds-text-primary,inherit)}
+ .sd-run-step{border-radius:10px;margin:6px 0;border:1px solid var(--bds-border);background:var(--bds-bg-elevated)}
+ .sd-run-step summary{display:flex;align-items:center;gap:8px;padding:8px 10px;list-style:none;font:12.5px/1.35 ui-monospace,Menlo,Consolas,monospace;min-width:0}
+ .sd-run-step summary::-webkit-details-marker{display:none}
+ .sd-run-sd{padding:0 10px 10px}
+ .sd-run-diff{border-radius:8px;overflow:auto;border:1px solid var(--bds-border,rgba(127,127,127,.2));background:var(--bds-bg-panel,#18191d);color:var(--bds-text-primary,inherit);font:12px/1.45 ui-monospace,Menlo,Consolas,monospace}
+ .sd-dl{display:flex;gap:8px;padding:1px 8px;white-space:pre-wrap;word-break:break-word;color:var(--bds-text-primary,inherit)}
+ .sd-dl i{flex:none;width:10px;font-style:normal;opacity:.75}.sd-dl span{flex:1;min-width:0}
+ .sd-dl-add{background:rgba(34,197,94,.14)}.sd-dl-add i{color:#16a34a;opacity:1}
+ .sd-dl-del{background:rgba(239,68,68,.14)}.sd-dl-del i{color:#ef4444;opacity:1}
 </style></head>
 <body><div class="cols" id="cols"></div>
 <template id="t">
+ <div class="lbl">Coding agent run cards (sd-run.js)</div>
+ <div class="sd-run-card" data-state="running"><div class="sd-run-head"><span class="sd-run-ic" data-s="running"></span><span class="sd-run-title">Working</span><span class="sd-run-meta">3 steps · 18s</span><span class="sd-run-ds"><ins>+18</ins><del>-4</del></span><button type="button" class="sd-run-stop"><i></i>Stop</button><span class="sd-run-chev" aria-hidden="true"></span></div><div class="sd-run-now"><b>run</b><span>ffmpeg -framerate 30 -i frame_%03d.png village.mp4</span><em>6s</em></div><ul class="sd-run-last"><li><span class="sd-run-si" data-s="ok"></span><b>edit_file</b><span>/root/workspace/village/render.py (edit)</span><span class="sd-run-ds"><ins>+18</ins><del>-4</del></span><em>0.8s</em></li><li><span class="sd-run-si" data-s="ok"></span><b>install_packages</b><span>ffmpeg, python3, py3-pillow</span><em>11s</em></li></ul></div>
+ <div class="sd-run-card" data-state="done"><div class="sd-run-head"><span class="sd-run-ic" data-s="done"></span><span class="sd-run-title">Worked for 42s</span><span class="sd-run-meta">4 steps</span><span class="sd-run-ds"><ins>+18</ins><del>-4</del></span><span class="sd-run-chev" aria-hidden="true"></span></div><div class="sd-run-acts"><button type="button" class="sd-run-act">Preview village.mp4</button><button type="button" class="sd-run-act sd-run-act-sec">Save village.mp4</button><button type="button" class="sd-run-act sd-run-act-sec">Linux Studio</button></div></div>
+ <details class="sd-run-step" open><summary><span class="sd-run-si" data-s="ok"></span><b>edit_file</b><span class="sd-run-call">/root/workspace/village/render.py</span><span class="sd-run-ds"><ins>+3</ins><del>-2</del></span><em>0.8s</em></summary><div class="sd-run-sd"><div class="sd-run-diff"><div class="sd-dl"><i> </i><span>def build_scene(width=1280, height=720):</span></div><div class="sd-dl sd-dl-del"><i>-</i><span>    fps = 15</span></div><div class="sd-dl sd-dl-del"><i>-</i><span>    preset = "ultrafast"</span></div><div class="sd-dl sd-dl-add"><i>+</i><span>    fps = 30</span></div><div class="sd-dl sd-dl-add"><i>+</i><span>    preset = "medium"</span></div><div class="sd-dl sd-dl-add"><i>+</i><span>    pix_fmt = "yuv420p"</span></div></div></div></details>
  <div class="lbl">Artifact cards</div>
- <div class="sd-art" data-kind="html-app" data-sd-owned="artifact"><div class="sd-art-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg></div><div class="sd-art-text"><div class="sd-art-title">Tip calculator</div><div class="sd-art-sub">Interactive artifact · HTML · Version 2</div></div><button class="sd-ib sd-art-dl"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg></button></div>
+ <div class="sd-art" data-kind="html-app" data-sd-owned="artifact"><div class="sd-art-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg></div><div class="sd-art-text"><div class="sd-art-title">Tip calculator</div><div class="sd-art-sub">Interactive artifact · HTML · Version 2</div></div><button class="sd-ib sd-art-dl" aria-label="Download artifact"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg></button></div>
  <div class="sd-art" data-kind="document"><div class="sd-art-tile"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></div><div class="sd-art-text"><div class="sd-art-title">Trip plan — Sylhet</div><div class="sd-art-sub">Document · MD</div></div></div>
  <div class="sd-art sd-art-busy"><div class="sd-art-tile"><span class="sd-spin"></span></div><div class="sd-art-text"><div class="sd-art-title">Snake game</div><div class="sd-art-sub">Generating…</div></div></div>
  <div class="lbl">Skeletons</div>
@@ -23,7 +59,7 @@
  <div class="lbl">Error card</div>
  <div class="sd-art-error"><span class="sd-err-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span><div class="sd-err-text"><div class="sd-err-title">Couldn’t display this artifact</div><div class="sd-err-detail">Invalid component JSON</div></div><div class="sd-err-actions"><button class="sd-chip">Show code</button><button class="sd-chip sd-chip-primary">Ask to fix</button></div></div>
  <div class="lbl">Todo (content.js)</div>
- <article class="bds-todo-card svelte-pje4zm"><div class="bds-todo-header svelte-pje4zm"><div class="bds-todo-header-left svelte-pje4zm"><div class="bds-todo-header-icon svelte-pje4zm"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg></div> <h4 class="svelte-pje4zm">Launch checklist</h4></div><div class="bds-todo-actions svelte-pje4zm"><button class="bds-todo-action-btn svelte-pje4zm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
+ <article class="bds-todo-card svelte-pje4zm"><div class="bds-todo-header svelte-pje4zm"><div class="bds-todo-header-left svelte-pje4zm"><div class="bds-todo-header-icon svelte-pje4zm"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg></div> <h4 class="svelte-pje4zm">Launch checklist</h4></div><div class="bds-todo-actions svelte-pje4zm"><button class="bds-todo-action-btn svelte-pje4zm" aria-label="Copy checklist"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div>
   <div class="bds-todo-body svelte-pje4zm">
    <div class="bds-todo-step svelte-pje4zm"><div class="bds-todo-step-left svelte-pje4zm"><div class="bds-todo-step-number svelte-pje4zm"><span class="number-circle svelte-pje4zm">1</span></div><div class="bds-todo-step-line svelte-pje4zm"></div></div><div class="bds-todo-step-right svelte-pje4zm"><h5 class="bds-todo-step-title svelte-pje4zm">Freeze the scope</h5><div class="bds-todo-step-desc ds-markdown svelte-pje4zm"><p>List the <strong>must-haves</strong> and park the rest.</p></div></div></div>
    <div class="bds-todo-step svelte-pje4zm"><div class="bds-todo-step-left svelte-pje4zm"><div class="bds-todo-step-number svelte-pje4zm"><span class="number-circle svelte-pje4zm">2</span></div></div><div class="bds-todo-step-right svelte-pje4zm"><h5 class="bds-todo-step-title svelte-pje4zm">Ship a beta</h5><div class="bds-todo-step-desc ds-markdown svelte-pje4zm"><p>Invite 20 users and collect feedback.</p></div></div></div>
@@ -43,7 +79,7 @@
 </script>
 <style>
  .dark-scope{--sd-bg:#212327;--sd-bg-2:#2a2c31;--sd-bg-3:#33363c;--sd-fg:#ececee;--sd-fg-2:#a4a7ae;--sd-fg-3:#7c8088;--sd-line:rgba(255,255,255,.10);--sd-line-2:rgba(255,255,255,.18);--sd-accent:#7b93ff;--sd-accent-soft:rgba(123,147,255,.16);--sd-danger:#f09595;--sd-shadow:0 12px 36px rgba(0,0,0,.45);--sd-elev-1:0 1px 2px rgba(0,0,0,.35);--sd-elev-2:0 12px 32px rgba(0,0,0,.4);--sd-sweep:rgba(255,255,255,.06);
-  --bds-bg-panel:#1e1f23;--bds-bg-elevated:#2a2b30;--bds-bg-hover:rgba(255,255,255,.08);--bds-border:#3a3b3f;--bds-text-primary:#ececec;--bds-text-secondary:#8e8ea0;--bds-text-tertiary:#6b6b7b;--bds-accent:#5b7bff;--bds-accent-glow:rgba(91,123,255,.15)}
+  --bds-bg-panel:#1e1f23;--bds-bg-elevated:#2a2b30;--bds-bg-input:#18191d;--bds-bg-hover:rgba(255,255,255,.08);--bds-border:#3a3b3f;--bds-text-primary:#ececec;--bds-text-secondary:#8e8ea0;--bds-text-tertiary:#6b6b7b;--bds-accent:#5b7bff;--bds-accent-glow:rgba(91,123,255,.15)}
  .dark-scope .sd-art[data-kind=document]{--sd-tile:#fb923c}
  .dark-scope .bds-todo-card{--todo-card-bg:var(--bds-bg-panel)}
 </style>

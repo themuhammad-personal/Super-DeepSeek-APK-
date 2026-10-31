@@ -13,7 +13,7 @@
     "dev": "node scripts/preview-server.mjs",
     "start": "node scripts/preview-server.mjs",
     "test": "npm run test:engine && npm run test:scripts && npm run test:compliance-harness",
-    "test:engine": "node --test android/app/src/test/js/*.test.mjs",
+    "test:engine": "node --test --test-concurrency=1 android/app/src/test/js/*.test.mjs",
     "test:compliance-harness": "node scripts/genui-compliance.mjs --self-test",
     "genui:acceptance": "node scripts/genui-browser-check.mjs",
     "genui:compliance": "node scripts/genui-compliance.mjs",

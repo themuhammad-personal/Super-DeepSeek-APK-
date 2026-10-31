@@ -379,6 +379,10 @@
     }, 1000);
   }
 
+  function tapHaptic(kind) {
+    try { if (typeof window.__sdHaptic === 'function') window.__sdHaptic(kind || 'tick'); } catch (_) {}
+  }
+
   function beginCall(payload) {
     // Nudges are counted per instruction of the user, not per tool call: a
     // model that answers a nudge by redoing work must not earn new nudges.
@@ -387,6 +391,7 @@
     state.active = true;
     state.lastActivity = Date.now();
     state.label = describe(payload);
+    tapHaptic('tick');
     render();
     ensurePoll();
   }
@@ -406,6 +411,7 @@
 
   function stopAgent(silent) {
     window.__sdAgentStopped = true;
+    if (!silent) tapHaptic('heavy');
     try { var b = bridge(); if (b && typeof b.sandboxStop === 'function') b.sandboxStop(); } catch (_) {}
     clickOfficialStop();
     state.active = false;
@@ -767,12 +773,27 @@
   }
 
   var reportedActive = false;
+  var reportedStep = 0;
+  var reportedLabel = '';
 
-  /** Tells the app while the agent works, so it stays protected in the background. */
+  /** Tells the app while the agent works (with live step count & tool label), so it stays protected in the background. */
   function reportActive() {
-    if (reportedActive === state.active) return;
-    reportedActive = state.active;
-    try { var b = bridge(); if (b && typeof b.sandboxAgentActive === 'function') b.sandboxAgentActive(!!state.active); } catch (_) {}
+    var act = !!state.active;
+    var step = act ? Math.max(0, flow.calls - flow.base) : 0;
+    var lbl = act ? String(state.pending > 0 ? state.label : t('Thinking…', 'ভাবছে…')) : '';
+    if (reportedActive === act && reportedStep === step && reportedLabel === lbl) return;
+    var prevBool = reportedActive;
+    reportedActive = act;
+    reportedStep = step;
+    reportedLabel = lbl;
+    try {
+      var b = bridge();
+      if (b && typeof b.sandboxAgentStatus === 'function') {
+        b.sandboxAgentStatus(act, step, lbl);
+      } else if (prevBool !== act && b && typeof b.sandboxAgentActive === 'function') {
+        b.sandboxAgentActive(act);
+      }
+    } catch (_) {}
   }
 
   function render() {
@@ -875,6 +896,7 @@
   var PREF_ENABLED = 'sd_sandbox_enabled';
   var PREF_MODE = 'sd_sandbox_mode';
   var PREF_CONTINUE = 'sd_agent_autocontinue';
+  var PREF_HAPTICS = 'sd_haptics_enabled';
   var PREF_LOCALE = 'sd_ui_locale';
 
   function pref(key, def) {
@@ -891,6 +913,7 @@
   }
 
   function autoContinue() { return pref(PREF_CONTINUE, '1') !== '0'; }
+  function hapticsOn() { return pref(PREF_HAPTICS, '1') !== '0'; }
 
   var lastLocale = null;
 
@@ -955,6 +978,7 @@
     loop: '<polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>',
     studio: '<polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2"></rect>',
+    haptic: '<path d="M5 9v6"></path><path d="M19 9v6"></path><rect x="8" y="4" width="8" height="16" rx="2"></rect>',
     reset: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>' +
       '<path d="M10 11v6"></path><path d="M14 11v6"></path>',
     chev: '<polyline points="9 18 15 12 9 6"></polyline>'
@@ -1099,9 +1123,24 @@
         title: t('Keep going until the task is done', 'কাজ শেষ না হওয়া পর্যন্ত চালিয়ে যাক'),
         sub: t('When a reply stops in the middle of a task, the app quietly asks the AI to continue (at most twice per message you send).',
           'কাজের মাঝপথে উত্তর থেমে গেলে অ্যাপ চুপচাপ AI-কে চালিয়ে যেতে বলে (আপনার প্রতিটি মেসেজে সর্বোচ্চ দুবার)।'),
-        onClick: function () { setPref(PREF_CONTINUE, cont ? '0' : '1'); updateCard(); }
+        onClick: function () { setPref(PREF_CONTINUE, cont ? '0' : '1'); tapHaptic('tick'); updateCard(); }
       });
     }
+
+    var feel = section(host, t('Interaction', 'ইন্টারেকশন'));
+    var hap = hapticsOn();
+    row(feel, {
+      key: PREF_HAPTICS, icon: 'haptic', isOn: hap,
+      title: t('Haptic feedback', 'হ্যাপটিক ভাইব্রেশন'),
+      sub: t('Subtle tactile ticks on sheets, agent steps and task completion.',
+        'শিট খোলা, এজেন্টের ধাপ ও কাজ শেষ হলে সূক্ষ্ম ভাইব্রেশন।'),
+      onClick: function () {
+        var next = hap ? '0' : '1';
+        setPref(PREF_HAPTICS, next);
+        if (next === '1') tapHaptic('tick');
+        updateCard();
+      }
+    });
 
     var tools = section(host, t('Tools', 'টুলস'));
     row(tools, {
@@ -1185,7 +1224,7 @@
     if (!host) return;
     // Rebuilding the rows while one is being pressed would eat the tap.
     var sig = JSON.stringify([i.enabled, i.mode, i.installed, i.installing, i.active > 0 || state.active, autoContinue(),
-      Date.now() - page.resetArmed < 4000, isBn(), i.supported, healthState().text]);
+      hapticsOn(), Date.now() - page.resetArmed < 4000, isBn(), i.supported, healthState().text]);
     if (host.getAttribute('data-sig') !== sig) { fillPage(host, i); host.setAttribute('data-sig', sig); return; }
     var line = statusText(i);
     var sub = host.querySelector('.sd-status .bds-set-sub');
@@ -1435,7 +1474,11 @@
     installScrollGuard();
     watchReplies();
     // A fresh page has no running loop (clears a flag left by a reload/crash).
-    try { var b = bridge(); if (b && typeof b.sandboxAgentActive === 'function') b.sandboxAgentActive(false); } catch (_) {}
+    try {
+      var b = bridge();
+      if (b && typeof b.sandboxAgentStatus === 'function') b.sandboxAgentStatus(false, 0, '');
+      else if (b && typeof b.sandboxAgentActive === 'function') b.sandboxAgentActive(false);
+    } catch (_) {}
     if (document.body) { watchSheet(); watchCards(); }
     else document.addEventListener('DOMContentLoaded', function () { watchSheet(); watchCards(); });
   }

@@ -17,11 +17,18 @@
     <string name="sandbox_title">লিনাক্স স্যান্ডবক্স</string>
     <string name="sandbox_idle">নিষ্ক্রিয়</string>
     <string name="sandbox_agent_working">এজেন্ট কাজ করছে</string>
+    <string name="sandbox_step_status">ধাপ %1$d · %2$s</string>
+    <string name="sandbox_open_studio">স্টুডিও</string>
     <string name="sandbox_stop">থামান</string>
     <plurals name="sandbox_running">
         <item quantity="one">%dটি কমান্ড চলছে</item>
         <item quantity="other">%dটি কমান্ড চলছে</item>
     </plurals>
+
+    <!-- নেটিভ অফলাইন সংযোগ গার্ড -->
+    <string name="offline_title">ইন্টারনেট সংযোগ নেই</string>
+    <string name="offline_message">নেটওয়ার্ক ফিরে এলেই Super DeepSeek স্বয়ংক্রিয়ভাবে পুনরায় যুক্ত হবে।</string>
+    <string name="offline_retry">আবার চেষ্টা করুন</string>
 
     <!-- App Shortcuts -->
     <string name="shortcut_new_chat">নতুন চ্যাট</string>

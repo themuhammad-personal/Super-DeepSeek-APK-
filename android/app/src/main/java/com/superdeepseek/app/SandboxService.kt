@@ -33,6 +33,8 @@ class SandboxService : Service() {
         const val ACTION_STOP = "com.superdeepseek.app.action.SANDBOX_STOP"
         private const val ACTION_UPDATE = "com.superdeepseek.app.action.SANDBOX_UPDATE"
         private const val EXTRA_ACTIVE = "active"
+        private const val EXTRA_STEP = "step"
+        private const val EXTRA_LABEL = "label"
 
         private val main = Handler(Looper.getMainLooper())
         @Volatile private var started = false
@@ -47,6 +49,8 @@ class SandboxService : Service() {
          */
         @Volatile var agentActive = false
             private set
+        @Volatile private var agentStep = 0
+        @Volatile private var agentLabel = ""
 
         /** Called from any thread by [Sandbox] whenever the number of live processes changes. */
         fun onActiveCountChanged(context: Context, active: Int) {
@@ -56,10 +60,19 @@ class SandboxService : Service() {
 
         /** Called from any thread when the page's agent loop starts or ends. */
         fun onAgentActiveChanged(context: Context, active: Boolean) {
+            onAgentStatusChanged(context, active, if (active) agentStep else 0, if (active) agentLabel else "")
+        }
+
+        /** Called from any thread with live step count and current tool/command summary. */
+        fun onAgentStatusChanged(context: Context, active: Boolean, step: Int, label: String?) {
             val app = context.applicationContext
+            val cleanStep = if (active) step.coerceAtLeast(0) else 0
+            val cleanLabel = if (active) (label ?: "").trim().take(140) else ""
             main.post {
-                if (agentActive == active) return@post
+                if (agentActive == active && agentStep == cleanStep && agentLabel == cleanLabel) return@post
                 agentActive = active
+                agentStep = cleanStep
+                agentLabel = cleanLabel
                 refresh(app, Sandbox.get(app).activeCount)
             }
         }
@@ -81,7 +94,11 @@ class SandboxService : Service() {
 
         private fun send(app: Context, action: String, active: Int) {
             try {
-                val i = Intent(app, SandboxService::class.java).setAction(action).putExtra(EXTRA_ACTIVE, active)
+                val i = Intent(app, SandboxService::class.java)
+                    .setAction(action)
+                    .putExtra(EXTRA_ACTIVE, active)
+                    .putExtra(EXTRA_STEP, agentStep)
+                    .putExtra(EXTRA_LABEL, agentLabel)
                 if (started) app.startService(i) else ContextCompat.startForegroundService(app, i)
             } catch (t: Throwable) {
                 // Background start restrictions (Android 12+): the sandbox still
@@ -99,6 +116,8 @@ class SandboxService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             agentActive = false
+            agentStep = 0
+            agentLabel = ""
             Sandbox.get(this).killAll()
             main.post { runCatching { onStopRequested?.invoke() } }
             // Nothing may be running (the agent was only thinking): without this
@@ -107,8 +126,10 @@ class SandboxService : Service() {
             main.post { refresh(app, Sandbox.get(app).activeCount) }
         }
         val active = intent?.getIntExtra(EXTRA_ACTIVE, Sandbox.get(this).activeCount) ?: 0
+        val step = intent?.getIntExtra(EXTRA_STEP, agentStep) ?: agentStep
+        val label = intent?.getStringExtra(EXTRA_LABEL) ?: agentLabel
         try {
-            val n = buildNotification(active)
+            val n = buildNotification(active, step, label)
             if (Build.VERSION.SDK_INT >= 34) {
                 startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             } else {
@@ -127,7 +148,7 @@ class SandboxService : Service() {
         super.onDestroy()
     }
 
-    private fun buildNotification(active: Int): Notification {
+    private fun buildNotification(active: Int, step: Int, label: String): Notification {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL) == null) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.sandbox_channel), NotificationManager.IMPORTANCE_LOW).apply {
@@ -137,22 +158,34 @@ class SandboxService : Service() {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val open = PendingIntent.getActivity(this, 0,
                 Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT), flags)
+        val openStudio = PendingIntent.getActivity(this, 2,
+                Intent(this, StudioActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), flags)
         val stop = PendingIntent.getService(this, 1, Intent(this, SandboxService::class.java).setAction(ACTION_STOP), flags)
-        val text = when {
+        val baseStatus = when {
             active > 0 -> resources.getQuantityString(R.plurals.sandbox_running, active, active)
             agentActive -> getString(R.string.sandbox_agent_working)
             else -> getString(R.string.sandbox_idle)
         }
+        val detail = when {
+            (active > 0 || agentActive) && step > 0 && label.isNotBlank() ->
+                getString(R.string.sandbox_step_status, step, label)
+            (active > 0 || agentActive) && label.isNotBlank() -> label
+            else -> baseStatus
+        }
+        val working = active > 0 || agentActive
         return NotificationCompat.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_sandbox)
                 .setContentTitle(getString(R.string.sandbox_title))
-                .setContentText(text)
+                .setContentText(detail)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(if (working && detail != baseStatus) "$baseStatus\n$detail" else detail))
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
                 .setCategory(NotificationCompat.CATEGORY_PROGRESS)
                 .setContentIntent(open)
-                .apply { if (active > 0 || agentActive) addAction(0, getString(R.string.sandbox_stop), stop) }
+                .setProgress(0, 0, working)
+                .addAction(0, getString(R.string.sandbox_open_studio), openStudio)
+                .apply { if (working) addAction(0, getString(R.string.sandbox_stop), stop) }
                 .build()
     }
 }

@@ -291,6 +291,7 @@
     var far = d.dy > Math.min(h * 0.3, 200);
     var flick = v > 0.5 && d.dy > 24;
     if (far || flick) {
+      try { if (typeof window.__sdHaptic === 'function') window.__sdHaptic('tick'); } catch (_) {}
       closeSheet(d.sheet, d.dy);
     } else {
       setOffset(d.sheet, 0, BACK_MS, 'cubic-bezier(.2,.9,.3,1)');
@@ -361,6 +362,7 @@
         d.classList.remove('sd-sheet-in');
         void d.offsetWidth; // restart the animation
         d.classList.add('sd-sheet-in');
+        try { if (typeof window.__sdHaptic === 'function') window.__sdHaptic('tick'); } catch (_) {}
       }
       wasOpen = open;
     };

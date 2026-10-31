@@ -1,13 +1,17 @@
 package com.superdeepseek.app
 
 import android.annotation.SuppressLint
-import android.app.Activity
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.webkit.*
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import java.io.ByteArrayInputStream
 import java.io.File
 
@@ -15,7 +19,7 @@ import java.io.File
  * Navigations and every subrequest except read-only GETs to a short list of public library
  * CDNs are denied in native code, in addition to response-header CSP. No chat bridge here.
  */
-class GeneratedAppActivity : Activity() {
+class GeneratedAppActivity : ComponentActivity() {
     private var web: WebView? = null
     private val timer = Handler(Looper.getMainLooper())
     private val stop = Runnable { dispose(); finish() }
@@ -47,10 +51,19 @@ class GeneratedAppActivity : Activity() {
         val c = Palette(night)
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
-        window.statusBarColor = c.bg
-        window.navigationBarColor = c.bg
-        if (!night) window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        @Suppress("DEPRECATION")
+        run {
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.TRANSPARENT
+        }
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !night
+            isAppearanceLightNavigationBars = !night
+        }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(c.bg) }
+        ViewCompat.setOnApplyWindowInsetsListener(layout, ::applyRootWindowInsets)
+        installSmoothImeInsetAnimation(layout)
         // Claude-style header: close · title/subtitle · Preview|Code · re-run · share
         val ripple = android.util.TypedValue().also { theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, it, true) }.resourceId
         fun iconButton(glyph: String, desc: String, onClick: () -> Unit) = TextView(this).apply {
@@ -107,6 +120,28 @@ class GeneratedAppActivity : Activity() {
         layout.addView(android.view.View(this).apply { setBackgroundColor(c.line) }, LinearLayout.LayoutParams(-1, maxOf(1, px(1) / 2)))
         palette = c
         setContentView(layout)
+        val backCallback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                if (showingCode) {
+                    showingCode = false
+                    isEnabled = false
+                    paintSeg()
+                    show(layout)
+                }
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, backCallback)
+        segViews.forEachIndexed { i, v ->
+            v.setOnClickListener {
+                val code = i == 1
+                if (code != showingCode) {
+                    showingCode = code
+                    backCallback.isEnabled = showingCode
+                    paintSeg()
+                    show(layout)
+                }
+            }
+        }
         show(layout)
         timer.postDelayed(stop, 10 * 60 * 1000L)
     }

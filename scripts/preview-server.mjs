@@ -172,7 +172,7 @@ function readStatus() {
     packageId: 'com.superdeepseek.app',
     version: pkg.version,
     branch: 'audit/world-class-hardening-20261029',
-    engineTestsPassed: 246,
+    engineTestsPassed: 252,
     scriptTestsPassed: 13,
     chromiumAcceptance: acceptance ? { passed: acceptance.passed, total: acceptance.total, at: acceptance.at } : { passed: 29, total: 29, at: null },
     nativeModulesCount: nativeModules.length,
@@ -267,7 +267,7 @@ function renderAuditHtml(status) {
       padding: 14px 16px;
     }
     .metric-label { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
-    .metric-val { font-size: 24px; font-weight: 700; font-family: var(--mono); }
+    .metric-val { font-size: 24px; font-weight: 700; font-family: var(--mono); font-variant-numeric: tabular-nums; }
     .metric-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
     .ok-text { color: #56d364; }
     .warn-text { color: #e3b341; }
@@ -311,12 +311,33 @@ function renderAuditHtml(status) {
     .bug-card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-left: 4px solid var(--accent);
       border-radius: 8px;
       padding: 15px 18px;
     }
-    .bug-card[data-sev="High"] { border-left-color: var(--high); }
-    .bug-card[data-sev="Medium"] { border-left-color: var(--med); }
+    .bug-card[data-sev="High"] { border-color: rgba(248, 81, 73, 0.35); }
+    .bug-card[data-sev="Medium"] { border-color: rgba(227, 179, 65, 0.32); }
+    .polish-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .polish-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 15px 18px;
+    }
+    .polish-tag {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: #79adff;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+    .polish-card h3 { margin: 0 0 6px; font-size: 15.5px; }
+    .polish-card p { margin: 0 0 8px; font-size: 13.5px; color: #ced9e6; }
     .bug-top {
       display: flex;
       flex-wrap: wrap;
@@ -407,7 +428,7 @@ function renderAuditHtml(status) {
         <div class="metric">
           <div class="metric-label">JS Engine ও Regression Tests</div>
           <div class="metric-val ok-text">${status.engineTestsPassed} / ${status.engineTestsPassed} PASS</div>
-          <div class="metric-note">১৪টি নতুন regression ও CI গার্ডসহ</div>
+          <div class="metric-note">২০টি নতুন regression ও Next-Level টেস্টসহ</div>
         </div>
         <div class="metric">
           <div class="metric-label">Real Chromium GenUI Acceptance</div>
@@ -423,6 +444,45 @@ function renderAuditHtml(status) {
           <div class="metric-label">Android Gradle CI ও বাস্তব ফোন</div>
           <div class="metric-val warn-text">PENDING CI / DEVICE</div>
           <div class="metric-note">এই কন্টেইনারে JDK/ফোন নেই — নিচে স্বচ্ছ তালিকা দেখুন</div>
+        </div>
+      </section>
+
+      <section aria-labelledby="polish-heading">
+        <div class="section-head">
+          <h2 id="polish-heading">নতুন সংযোজিত ৫টি Next-Level Native Polish আপগ্রেড</h2>
+          <a class="btn" href="/design-preview/cards.html">নতুন Agent Run Card ও Diff প্রিভিউ দেখুন</a>
+        </div>
+        <div class="polish-grid">
+          <article class="polish-card">
+            <div class="polish-tag">01 · Smooth 120Hz IME &amp; Edge-to-Edge</div>
+            <h3>মাখনের মতো স্মুথ কীবোর্ড অ্যানিমেশন ও Predictive Back</h3>
+            <p><code>WindowInsetsAnimationCompat.Callback</code> দিয়ে প্রতি ফ্রেমে কীবোর্ড স্লাইড ইন্টারপোলেশন এবং <code>GeneratedAppActivity</code>-কে পূর্ণ Edge-to-Edge ও Code→Preview Back হ্যান্ডলিংয়ে উন্নীত করা হয়েছে।</p>
+            <div class="code-ref">MainActivity.kt · StudioActivity.kt · GeneratedAppActivity.kt</div>
+          </article>
+          <article class="polish-card">
+            <div class="polish-tag">02 · Rich Coding Agent Run Card</div>
+            <h3>Unified Diff (+N/-M), লাইভ স্টেপ টাইমার ও ওয়ান-ট্যাপ Preview/Save</h3>
+            <p>ফাইল এডিটে রঙিন <code>+N / -M</code> ব্যাজ ও Unified Diff ভিউ, চলমান ধাপের লাইভ সেকেন্ড টাইমার এবং তৈরি হওয়া মিডিয়া/সার্ভার ফাইলের জন্য সরাসরি <code>Preview</code>, <code>Save</code> ও <code>Linux Studio</code> বাটন।</p>
+            <div class="code-ref">sd-run.js · design-preview/cards.html</div>
+          </article>
+          <article class="polish-card">
+            <div class="polish-tag">03 · Live Foreground Notification</div>
+            <h3>ব্যাকগ্রাউন্ডে লাইভ স্টেপ প্রগ্রেস ও Studio/Stop নোটিফিকেশন</h3>
+            <p>অ্যাপ মিনিমাইজ থাকলেও নোটিফিকেশনে <code>Step N · running command…</code> লাইভ আপডেট, ইনডিটারমিনেট প্রগ্রেস বার এবং সরাসরি <code>Studio</code> ও <code>Stop</code> অ্যাকশন বাটন যুক্ত হয়েছে।</p>
+            <div class="code-ref">SandboxService.kt · WebViewBridge.kt · sd-agent.js · strings.xml</div>
+          </article>
+          <article class="polish-card">
+            <div class="polish-tag">04 · Connectivity Guard &amp; Tactile Haptics</div>
+            <h3>নেটিভ অফলাইন রিকভারি ওভারলে ও কন্টেক্সচুয়াল হ্যাপটিকস</h3>
+            <p>নেটওয়ার্ক বিচ্ছিন্ন হলে কাঁচা WebView এরর পেজের বদলে থিমযুক্ত নেটিভ অফলাইন কার্ড + অটো-রিকানেক্ট রিলোড এবং এজেন্ট সম্পন্ন/শিট সোয়াইপে রেট-লিমিটেড হ্যাপটিক ভাইব্রেশন (টগলসহ)।</p>
+            <div class="code-ref">MainActivity.kt · StudioActivity.kt · WebViewBridge.kt · sd-native.js · sd-sheets.js</div>
+          </article>
+          <article class="polish-card">
+            <div class="polish-tag">05 · Device-Side PDF, Media Metadata &amp; OCR</div>
+            <h3>ডিভাইসেই PDF টেক্সট, Audio/Video মেটাডেটা ও অফলাইন OCR</h3>
+            <p>কোনো বাহ্যিক API ছাড়াই ডিভাইসে PDF টেক্সট/পেজ কাউন্ট (<code>FlateDecode</code> + <code>PdfRenderer</code>), অডিও/ভিডিওর Duration/Resolution/FPS/ID3 (<code>MediaMetadataRetriever</code> + বাইনারি পার্সার) এবং স্যান্ডবক্সে অফলাইন <code>tesseract</code> (<code>eng+ben</code>) OCR নিষ্কাশন।</p>
+            <div class="code-ref">NativeMediaInspector.kt · WebViewBridge.kt · sd-files.js</div>
+          </article>
         </div>
       </section>
 
