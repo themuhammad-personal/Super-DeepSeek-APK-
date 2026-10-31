@@ -640,7 +640,7 @@ class MainActivity : ComponentActivity() {
                     if (isMainFrameNetworkError(request.isForMainFrame, error.errorCode) && isTrustedBridgeUrl(targetUrl)) {
                         mainFrameLoadFailed = true
                         failedMainFrameUrl = targetUrl
-                        dismissBootOverlay()
+                        dismissBoot()
                         showOfflineOverlay(true)
                     }
                 }
